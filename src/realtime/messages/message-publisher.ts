@@ -1,0 +1,45 @@
+import type { Namespace } from "socket.io";
+
+import type {
+  MessageDto,
+  MessagePublisher,
+} from "../../modules/messages/message.service.js";
+import { conversationRoom } from "../rooms/room-names.js";
+import type {
+  ChatClientToServerEvents,
+  ChatInterServerEvents,
+  ChatServerToClientEvents,
+  ChatSocketData,
+  MessageEventDto,
+} from "../server/chat-events.js";
+
+type ChatNamespace = Namespace<
+  ChatClientToServerEvents,
+  ChatServerToClientEvents,
+  ChatInterServerEvents,
+  ChatSocketData
+>;
+
+export class SocketMessagePublisher implements MessagePublisher {
+  private namespace: ChatNamespace | null = null;
+
+  bind(namespace: ChatNamespace): void {
+    this.namespace = namespace;
+  }
+
+  publishMessageCreated(message: MessageDto): void {
+    this.namespace
+      ?.to(conversationRoom(message.conversationId))
+      .emit("message:created", { message: toMessageEventDto(message) });
+  }
+}
+
+function toMessageEventDto(message: MessageDto): MessageEventDto {
+  return {
+    ...message,
+    createdAt: message.createdAt.toISOString(),
+    editedAt: message.editedAt?.toISOString() ?? null,
+  };
+}
+
+export const socketMessagePublisher = new SocketMessagePublisher();

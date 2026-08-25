@@ -1,0 +1,149 @@
+generator client {
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  runtime                = "nodejs"
+  moduleFormat           = "esm"
+  generatedFileExtension = "ts"
+  importFileExtension    = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+
+  @@map("user_status")
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+
+  @@map("conversation_type")
+}
+
+enum MemberRole {
+  MEMBER
+  ADMIN
+  OWNER
+
+  @@map("member_role")
+}
+
+enum MessageKind {
+  TEXT
+
+  @@map("message_kind")
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique(map: "users_email_key") @db.VarChar(320)
+  username     String     @unique(map: "users_username_key") @db.VarChar(32)
+  displayName  String     @map("display_name") @db.VarChar(80)
+  passwordHash String     @map("password_hash") @db.VarChar(255)
+  avatarUrl    String?    @map("avatar_url") @db.Text
+  status       UserStatus @default(ACTIVE)
+  lastSeenAt   DateTime?  @map("last_seen_at") @db.Timestamptz(3)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz(3)
+
+  createdConversations Conversation[]       @relation("ConversationCreator")
+  conversationMembers  ConversationMember[]
+  messages             Message[]
+  messageReads         MessageRead[]
+  authSessions         AuthSession[]
+
+  @@map("users")
+}
+
+model Conversation {
+  id            String           @id @default(uuid()) @db.Uuid
+  type          ConversationType @default(DIRECT)
+  directKey     String?          @unique(map: "conversations_direct_key_key") @map("direct_key") @db.VarChar(73)
+  title         String?          @db.VarChar(120)
+  createdById   String?          @map("created_by_id") @db.Uuid
+  lastMessageAt DateTime?        @map("last_message_at") @db.Timestamptz(3)
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  createdBy    User?                @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  members      ConversationMember[]
+  messages     Message[]
+  messageReads MessageRead[]
+
+  @@index([createdById], map: "conversations_created_by_id_idx")
+  @@map("conversations")
+}
+
+model ConversationMember {
+  conversationId String     @map("conversation_id") @db.Uuid
+  userId         String     @map("user_id") @db.Uuid
+  role           MemberRole @default(MEMBER)
+  joinedAt       DateTime   @default(now()) @map("joined_at") @db.Timestamptz(3)
+  leftAt         DateTime?  @map("left_at") @db.Timestamptz(3)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([conversationId, userId], map: "conversation_members_pkey")
+  @@index([userId, leftAt, conversationId], map: "conversation_members_user_id_left_at_conversation_id_idx")
+  @@map("conversation_members")
+}
+
+model Message {
+  id              String      @id @default(uuid()) @db.Uuid
+  conversationId  String      @map("conversation_id") @db.Uuid
+  senderId        String      @map("sender_id") @db.Uuid
+  clientMessageId String      @map("client_message_id") @db.Uuid
+  kind            MessageKind @default(TEXT)
+  body            String      @db.Text
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  editedAt        DateTime?   @map("edited_at") @db.Timestamptz(3)
+  deletedAt       DateTime?   @map("deleted_at") @db.Timestamptz(3)
+
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  sender         User          @relation(fields: [senderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  readWatermarks MessageRead[]
+
+  @@unique([senderId, clientMessageId], map: "messages_sender_id_client_message_id_key")
+  @@index([conversationId, createdAt(sort: Desc), id(sort: Desc)], map: "messages_conversation_id_created_at_id_idx")
+  @@map("messages")
+}
+
+/// Per-user read watermark. Application updates must only advance it in
+/// `(messages.created_at, messages.id)` order within the same conversation.
+model MessageRead {
+  conversationId    String   @map("conversation_id") @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  lastReadMessageId String   @map("last_read_message_id") @db.Uuid
+  readAt            DateTime @map("read_at") @db.Timestamptz(3)
+
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user            User         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  lastReadMessage Message      @relation(fields: [lastReadMessageId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@id([conversationId, userId], map: "message_reads_pkey")
+  @@index([userId], map: "message_reads_user_id_idx")
+  @@index([lastReadMessageId], map: "message_reads_last_read_message_id_idx")
+  @@map("message_reads")
+}
+
+model AuthSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @unique(map: "auth_sessions_refresh_token_hash_key") @map("refresh_token_hash") @db.Text
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(3)
+  lastUsedAt       DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId], map: "auth_sessions_user_id_idx")
+  @@map("auth_sessions")
+}
