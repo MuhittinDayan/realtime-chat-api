@@ -1,5 +1,6 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 
+import { messageCreateRateLimit } from "../../http/middleware/rate-limit.js";
 import {
   validateParams,
   withValidatedBody,
@@ -13,12 +14,16 @@ import {
   messageHistoryQuerySchema,
 } from "./message.schema.js";
 
-export function createMessageRouter(controller: MessageController): Router {
+export function createMessageRouter(
+  controller: MessageController,
+  createRateLimitMiddleware: RequestHandler = messageCreateRateLimit,
+): Router {
   const router = Router({ mergeParams: true });
 
   router.use(validateParams(conversationParamsSchema));
   router.post(
     "/",
+    createRateLimitMiddleware,
     withValidatedBody(createMessageBodySchema, controller.create),
   );
   router.get(

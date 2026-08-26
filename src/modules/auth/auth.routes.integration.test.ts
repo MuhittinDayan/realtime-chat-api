@@ -1,8 +1,9 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
 import { createApp } from "../../app.js";
+import { createHttpRateLimiter } from "../../http/middleware/rate-limit.js";
 import type { Clock } from "../../shared/time/clock.js";
 import {
   EmailAlreadyInUseError,
@@ -134,7 +135,12 @@ const fixedClock: Clock = {
 interface TestAppOptions {
   enforceOrigin?: boolean;
   secureCookie?: boolean;
+  loginRateLimitMiddleware?: RequestHandler;
+  registerRateLimitMiddleware?: RequestHandler;
+  refreshRateLimitMiddleware?: RequestHandler;
 }
+
+const noRateLimit: RequestHandler = (_request, _response, next) => next();
 
 function createTestApp(
   service: AuthHttpService,
@@ -156,6 +162,12 @@ function createTestApp(
       trustedOrigin: TRUSTED_ORIGIN,
       enforce: options.enforceOrigin ?? false,
     }),
+    loginRateLimitMiddleware:
+      options.loginRateLimitMiddleware ?? noRateLimit,
+    registerRateLimitMiddleware:
+      options.registerRateLimitMiddleware ?? noRateLimit,
+    refreshRateLimitMiddleware:
+      options.refreshRateLimitMiddleware ?? noRateLimit,
   });
   const apiRouter = Router();
   apiRouter.use("/auth", authRouter);
@@ -182,6 +194,88 @@ function readSetCookieHeader(headers: unknown): readonly string[] {
 }
 
 describe("auth HTTP routes", () => {
+  it("rate limits login by IP with the standard 429 response", async () => {
+    const service = new FakeAuthHttpService();
+    const app = createTestApp(service, {
+      loginRateLimitMiddleware: createHttpRateLimiter({
+        identifier: "test-auth-login",
+        windowMs: 60_000,
+        limit: 1,
+        scope: "ip",
+      }),
+    });
+    const payload = {
+      email: "alice@example.com",
+      password: "correct-password",
+    };
+
+    await request(app).post("/api/v1/auth/login").send(payload).expect(200);
+    const rejected = await request(app)
+      .post("/api/v1/auth/login")
+      .send(payload)
+      .expect(429);
+
+    expect(rejected.body.error.code).toBe("RATE_LIMIT_EXCEEDED");
+    expect(rejected.body.error.message).toBe("Too many requests");
+    expect(typeof rejected.body.error.requestId).toBe("string");
+    expect(Number(rejected.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  it("rate limits registration independently from login", async () => {
+    const service = new FakeAuthHttpService();
+    const app = createTestApp(service, {
+      registerRateLimitMiddleware: createHttpRateLimiter({
+        identifier: "test-auth-register",
+        windowMs: 60_000,
+        limit: 1,
+        scope: "ip",
+      }),
+    });
+    const payload = {
+      email: "alice@example.com",
+      username: "alice",
+      displayName: "Alice",
+      password: "correct-password",
+    };
+
+    await request(app).post("/api/v1/auth/register").send(payload).expect(201);
+    const rejected = await request(app)
+      .post("/api/v1/auth/register")
+      .send(payload)
+      .expect(429);
+    await request(app)
+      .post("/api/v1/auth/login")
+      .send({ email: payload.email, password: payload.password })
+      .expect(200);
+
+    expect(rejected.body.error.code).toBe("RATE_LIMIT_EXCEEDED");
+    expect(Number(rejected.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  it("rate limits refresh independently from other auth routes", async () => {
+    const service = new FakeAuthHttpService();
+    const app = createTestApp(service, {
+      refreshRateLimitMiddleware: createHttpRateLimiter({
+        identifier: "test-auth-refresh",
+        windowMs: 60_000,
+        limit: 1,
+        scope: "ip",
+      }),
+    });
+
+    await request(app)
+      .post("/api/v1/auth/refresh")
+      .set("Cookie", "chat_refresh_token=old-refresh-token")
+      .expect(200);
+    const rejected = await request(app)
+      .post("/api/v1/auth/refresh")
+      .set("Cookie", "chat_refresh_token=old-refresh-token")
+      .expect(429);
+
+    expect(rejected.body.error.code).toBe("RATE_LIMIT_EXCEEDED");
+    expect(Number(rejected.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
   it("registers a user, normalizes email, and sets the refresh cookie", async () => {
     const service = new FakeAuthHttpService();
     const response = await request(createTestApp(service))

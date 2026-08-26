@@ -15,6 +15,7 @@ import {
   type SocketPresencePublisher,
 } from "../presence/presence-publisher.js";
 import type { PresenceLifecycleService } from "../presence/presence.service.js";
+import type { SocketEventRateLimitPolicy } from "../rate-limit/socket-event-rate-limiter.js";
 import {
   socketReadPublisher,
   type SocketReadPublisher,
@@ -29,6 +30,7 @@ export interface CreateSocketServerOptions {
   messagePublisher?: SocketMessagePublisher;
   readPublisher?: SocketReadPublisher;
   clock?: Clock;
+  typingRateLimitPolicy?: SocketEventRateLimitPolicy;
 }
 
 export function createSocketServer(
@@ -57,6 +59,9 @@ export function createSocketServer(
       options.conversationAccessService ?? conversationService,
     presenceService: options.presenceService ?? presenceService,
     clock: options.clock ?? systemClock,
+    ...(options.typingRateLimitPolicy === undefined
+      ? {}
+      : { typingRateLimitPolicy: options.typingRateLimitPolicy }),
   });
 
   return socketServer;

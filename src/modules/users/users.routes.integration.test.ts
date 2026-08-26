@@ -1,8 +1,9 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
 import { createApp } from "../../app.js";
+import { createHttpRateLimiter } from "../../http/middleware/rate-limit.js";
 import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
@@ -42,7 +43,12 @@ class FakeUsersService implements UsersHttpService {
   }
 }
 
-function createTestApp(service: UsersHttpService) {
+const noRateLimit: RequestHandler = (_request, _response, next) => next();
+
+function createTestApp(
+  service: UsersHttpService,
+  searchRateLimitMiddleware: RequestHandler = noRateLimit,
+) {
   const apiRouter = Router();
   apiRouter.use(
     "/users",
@@ -51,12 +57,37 @@ function createTestApp(service: UsersHttpService) {
       authenticationMiddleware: createAuthenticationMiddleware(
         new FakeAuthenticator(),
       ),
+      searchRateLimitMiddleware,
     }),
   );
   return createApp({ apiRouter });
 }
 
 describe("users HTTP routes", () => {
+  it("rate limits search per authenticated user", async () => {
+    const app = createTestApp(
+      new FakeUsersService(),
+      createHttpRateLimiter({
+        identifier: "test-user-search",
+        windowMs: 60_000,
+        limit: 1,
+        scope: "user",
+      }),
+    );
+
+    await request(app)
+      .get("/api/v1/users?query=bo")
+      .set("Authorization", "Bearer token")
+      .expect(200);
+    const rejected = await request(app)
+      .get("/api/v1/users?query=bo")
+      .set("Authorization", "Bearer token")
+      .expect(429);
+
+    expect(rejected.body.error.code).toBe("RATE_LIMIT_EXCEEDED");
+    expect(Number(rejected.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
   it("requires authentication", async () => {
     const response = await request(createTestApp(new FakeUsersService()))
       .get("/api/v1/users?query=bo")
