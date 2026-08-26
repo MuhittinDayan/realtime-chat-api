@@ -6,6 +6,7 @@ import { jsonBodyParser } from "./http/middleware/json-body-parser.js";
 import { notFoundHandler } from "./http/middleware/not-found.js";
 import { requestId } from "./http/middleware/request-id.js";
 import { requestLogger } from "./http/middleware/request-logger.js";
+import { securityHeaders } from "./http/middleware/security-headers.js";
 import { apiV1Router } from "./http/routes/index.js";
 
 export interface CreateAppOptions {
@@ -16,6 +17,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const app = express();
 
   app.disable("x-powered-by");
+  app.use(securityHeaders);
   app.use(requestId);
   app.use(requestLogger);
   app.use(corsMiddleware);
