@@ -1,0 +1,3 @@
+# Synthetic JWT-like examples from Faz 8; these values were never credentials.
+295e85634a90786e4ff71c4d53432a397af76a17:docs/integration-examples.md:generic-api-key:124
+295e85634a90786e4ff71c4d53432a397af76a17:docs/openapi.yaml:generic-api-key:256
