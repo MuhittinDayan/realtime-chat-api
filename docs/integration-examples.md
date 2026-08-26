@@ -26,6 +26,37 @@ Beş senaryonun tamamı migration uygulanmış gerçek PostgreSQL üzerinde `src
 
 DB testinin migration ve tekillik dayanakları: `prisma/migrations/20260821000000_initial_chat_schema/migration.sql`, `prisma/schema.prisma`.
 
+## HTTP 429 işleme
+
+Login, register ve refresh IP'ye; kullanıcı arama ve mesaj oluşturma ise
+doğrulanmış kullanıcıya göre ayrı kotalar kullanır. Bir kotanın dolması diğer
+endpoint'in kotasını tüketmez. Limit aşıldığında frontend yeni isteği
+`Retry-After` başlığındaki saniye dolmadan otomatik tekrar etmemelidir.
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+Content-Type: application/json
+```
+
+```json
+{
+  "error": {
+    "code": "RATE_LIMIT_EXCEEDED",
+    "message": "Too many requests",
+    "requestId": "77777777-7777-4777-8777-777777777777"
+  }
+}
+```
+
+Kesin kotalar OpenAPI belgesindeki ilgili operasyonlarda yazılıdır. Kaynaklar:
+`src/http/middleware/rate-limit.ts`, `src/http/middleware/error-handler.ts`,
+`src/modules/auth/auth.routes.ts`, `src/modules/users/users.routes.ts`,
+`src/modules/messages/message.routes.ts`; testler:
+`src/modules/auth/auth.routes.integration.test.ts`,
+`src/modules/users/users.routes.integration.test.ts`,
+`src/modules/messages/message.routes.integration.test.ts`.
+
 ## A. Reconnect sonrası konuşmaya yeniden abone olma
 
 ### Kesin davranış
@@ -121,7 +152,7 @@ Register/login/refresh HTTP gövdeleri access token'ın sona erme zamanını dö
 
    ```json
    {
-     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.rotated"
+     "accessToken": "example-rotated-access-token"
    }
    ```
 
@@ -294,6 +325,16 @@ Cursor `Buffer.from(JSON.stringify(payload)).toString("base64url")` ile üretili
 ### Kesin davranış
 
 Sunucu, abone bir socket'ten geçerli `typing:set` alınca diğer abonelere tek bir volatile `typing:updated` gönderir. `expiresAt`, event'in işlendiği sunucu saatine tam 5.000 ms eklenerek hesaplanır. Sunucu timer saklamaz; beş saniye sonra otomatik `isTyping:false` yayınlamaz. Kaynak: `src/realtime/server/configure-chat-namespace.ts`; testler: `src/realtime/server/chat.integration.test.ts`, `src/contracts/backend-contract.integration.test.ts`.
+
+Ek flood-control sözleşmesi: aynı socket'ten kayan 5 saniyelik pencerede ilk
+20 `typing:set` kabul edilir; sınırı aşan event'ler ack/hata/disconnect olmadan
+sessizce düşürülür. Geçersiz veya konuşma odasına abone olmayan event'ler de
+kontrol payload doğrulamasından önce yapıldığı için kotayı tüketir. Frontend bu
+event'i her tuş vuruşunda değil, `expiresAt` süresini yenilemeye yetecek aralıkla
+göndermelidir. Kaynaklar:
+`src/realtime/rate-limit/socket-event-rate-limiter.ts`,
+`src/realtime/server/configure-chat-namespace.ts`; test:
+`src/realtime/server/chat.integration.test.ts`.
 
 ### Örnek akış
 

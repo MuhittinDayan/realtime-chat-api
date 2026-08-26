@@ -17,8 +17,29 @@ info:
       ortamlarda bu Origin kontrolü uygulanmaz.
     - Register, login, refresh ve me cevapları `Cache-Control: no-store` taşır.
 
+    Güvenlik response header'ları tüm HTTP cevaplarında Helmet 8.3.0'ın
+    varsayılan politikalarıyla üretilir. Bunlar arasında
+    `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`,
+    `Content-Security-Policy` içinde `frame-ancestors 'self'` ve
+    `Referrer-Policy: no-referrer` bulunur. `Strict-Transport-Security:
+    max-age=31536000; includeSubDomains` yalnızca `NODE_ENV=production`
+    iken eklenir. CORS origin'i `FRONTEND_ORIGIN` ile sınırlı ve
+    credential desteği açıktır. Kaynaklar:
+    `src/http/middleware/security-headers.ts`, `src/app.ts`,
+    `src/http/middleware/cors.ts`.
+
     Cursor değerleri base64url kodlanmış, sürümlü JSON'dur. İstemci bunları
     decode etmeye veya üretmeye çalışmadan opak string olarak geri göndermelidir.
+
+    Rate limit politikaları süreç içindeki ayrı bellek depolarında tutulur ve
+    süreç yeniden başladığında sıfırlanır. Login `10/15 dakika/IP`, register
+    `5/60 dakika/IP`, refresh `30/5 dakika/IP`, kullanıcı arama
+    `60/dakika/kullanıcı` ve mesaj oluşturma `60/dakika/kullanıcı` sınırındadır.
+    IP kapsamı Express `request.ip` değeridir; uygulama `trust proxy` açmadığı
+    için doğrudan TCP eşini temsil eder. Paylaşımlı NAT/CGNAT kullanıcıları aynı
+    login/register/refresh kotasını tüketebilir. Limit aşımında standart hata
+    gövdesiyle 429 ve pencere sıfırlanana kadar saniye cinsinden `Retry-After`
+    döner. Kaynak: `src/http/middleware/rate-limit.ts` ve ilgili route dosyaları.
 
     Kaynaklar: `src/modules/auth/auth.middleware.ts`,
     `src/modules/auth/refresh-cookie.ts`, `src/modules/auth/auth.routes.ts`,
@@ -90,8 +111,10 @@ paths:
       tags: [Auth]
       summary: Kullanıcı kaydı ve oturum oluşturma
       operationId: register
+      description: IP başına 60 dakikada 5 istekle sınırlıdır.
       security: []
       x-source-files:
+        - src/http/middleware/rate-limit.ts
         - src/modules/auth/auth.routes.ts
         - src/modules/auth/auth.schema.ts
         - src/modules/auth/auth.controller.ts
@@ -159,6 +182,8 @@ paths:
                       requestId: 77777777-7777-4777-8777-777777777777
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -167,8 +192,10 @@ paths:
       tags: [Auth]
       summary: E-posta ve parola ile oturum açma
       operationId: login
+      description: IP başına 15 dakikada 10 istekle sınırlıdır. Paylaşımlı NAT/CGNAT istemcileri aynı kotayı tüketir.
       security: []
       x-source-files:
+        - src/http/middleware/rate-limit.ts
         - src/modules/auth/auth.routes.ts
         - src/modules/auth/auth.schema.ts
         - src/modules/auth/auth.controller.ts
@@ -220,6 +247,8 @@ paths:
                   requestId: 77777777-7777-4777-8777-777777777777
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -228,11 +257,13 @@ paths:
       tags: [Auth]
       summary: Refresh token'ı döndürerek yeni access token alma
       operationId: refreshAccessToken
+      description: IP başına 5 dakikada 30 istekle sınırlıdır.
       # Cookie/Origin kaynakları: src/modules/auth/refresh-cookie.ts,
       # src/modules/auth/auth.middleware.ts, src/modules/auth/auth.routes.ts.
       security:
         - refreshCookie: []
       x-source-files:
+        - src/http/middleware/rate-limit.ts
         - src/modules/auth/auth.routes.ts
         - src/modules/auth/auth.controller.ts
         - src/modules/auth/auth.middleware.ts
@@ -253,7 +284,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/RefreshResponse"
               example:
-                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.rotated
+                accessToken: example-rotated-access-token
         "401":
           description: Cookie yok, token geçersiz, iptal edilmiş, süresi dolmuş veya yarışta daha önce döndürülmüş
           content:
@@ -267,6 +298,8 @@ paths:
                   requestId: 77777777-7777-4777-8777-777777777777
         "403":
           $ref: "#/components/responses/CsrfError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -345,9 +378,11 @@ paths:
       tags: [Users]
       summary: Aktif kullanıcıları kullanıcı adı veya görünen ad ile arama
       operationId: searchUsers
+      description: Doğrulanmış kullanıcı başına dakikada 60 istekle sınırlıdır.
       security:
         - bearerAuth: []
       x-source-files:
+        - src/http/middleware/rate-limit.ts
         - src/modules/users/users.routes.ts
         - src/modules/users/users.schema.ts
         - src/modules/users/users.controller.ts
@@ -399,6 +434,8 @@ paths:
           $ref: "#/components/responses/ValidationError"
         "401":
           $ref: "#/components/responses/BearerUnauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -599,9 +636,11 @@ paths:
       tags: [Messages]
       summary: Metin mesajı oluşturma veya idempotent retry sonucunu döndürme
       operationId: createMessage
+      description: Doğrulanmış kullanıcı başına dakikada 60 istekle sınırlıdır.
       security:
         - bearerAuth: []
       x-source-files:
+        - src/http/middleware/rate-limit.ts
         - src/modules/messages/message.routes.ts
         - src/modules/messages/message.schema.ts
         - src/modules/messages/message.controller.ts
@@ -660,6 +699,8 @@ paths:
           $ref: "#/components/responses/ConversationNotFound"
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -843,8 +884,36 @@ components:
         `Secure` eklenir. Kaynak: `src/modules/auth/refresh-cookie.ts`.
       schema:
         type: string
+    RetryAfter:
+      description: Rate-limit penceresinin sıfırlanmasına kalan tam saniye.
+      schema:
+        type: integer
+        minimum: 1
+      example: 60
 
   responses:
+    RateLimited:
+      description: İlgili endpoint'in bağımsız kotası aşıldı
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+        RateLimit:
+          description: express-rate-limit tarafından draft-8 biçiminde üretilen mevcut kota durumu.
+          schema:
+            type: string
+        RateLimit-Policy:
+          description: express-rate-limit tarafından draft-8 biçiminde üretilen kota politikası.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: RATE_LIMIT_EXCEEDED
+              message: Too many requests
+              requestId: 77777777-7777-4777-8777-777777777777
     ValidationError:
       description: Zod/request doğrulaması veya bozuk JSON
       content:

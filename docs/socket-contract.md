@@ -111,6 +111,23 @@ Payload:
 
 Ack yoktur. Payload strict şemaya uymazsa veya gönderen socket ilgili konuşma odasına abone değilse event sessizce yok sayılır. Başarılı event, gönderen hariç aynı konuşma odasındaki socket'lere volatile `typing:updated` olarak anında yayınlanır. Typing anında yeniden DB üyelik sorgusu yapılmaz; odada bulunma şartı kullanılır. Kaynak: `src/realtime/server/configure-chat-namespace.ts`.
 
+Her socket bağlantısının bağımsız `typing:set` kotası vardır: kayan 5 saniyelik
+pencerede en fazla 20 event kabul edilir. Kontrol payload doğrulamasından önce
+yapıldığı için geçersiz veya abone olunmamış bir socket'ten gelen `typing:set`
+event'leri de kotayı tüketir. Limit üstündeki event ack, hata eventi veya
+disconnect üretmeden sessizce düşürülür. Kota süreç belleğindedir; socket
+koptuğunda o bağlantının sayacı da bırakılır. Kaynaklar:
+`src/realtime/rate-limit/socket-event-rate-limiter.ts`,
+`src/realtime/server/configure-chat-namespace.ts`; testler:
+`src/realtime/rate-limit/socket-event-rate-limiter.test.ts`,
+`src/realtime/server/chat.integration.test.ts`.
+
+Client→Server yönünde mesaj gönderme eventi yoktur. Mesajlar
+`POST /api/v1/conversations/{conversationId}/messages` üzerinden oluşturulur
+ve bu HTTP ucu kullanıcı başına dakikada 60 istekle sınırlıdır. Kaynaklar:
+`src/realtime/server/chat-events.ts`, `src/modules/messages/message.routes.ts`,
+`src/http/middleware/rate-limit.ts`.
+
 Sunucu her gelen `typing:set` için `expiresAt = clock.now() + 5_000 ms` hesaplar. Sunucuda beş saniyelik timer kurulmaz ve süre sonunda otomatik `typing:updated { isTyping: false }` yayınlanmaz. İstemci `expiresAt` geçtiğinde göstergeyi yerel olarak kapatmalı; yazma sürüyorsa süre dolmadan yeni `typing:set { isTyping: true }`, yazma bittiyse `typing:set { isTyping: false }` göndermelidir. Kaynak: `src/realtime/server/configure-chat-namespace.ts`; 5 saniye ve otomatik-false bulunmadığını doğrulayan testler: `src/realtime/server/chat.integration.test.ts`, `src/contracts/backend-contract.integration.test.ts`.
 
 ### `presence:subscribe`
