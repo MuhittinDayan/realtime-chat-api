@@ -1,0 +1,1271 @@
+openapi: 3.1.0
+info:
+  title: Realtime Chat API
+  version: 0.1.0
+  description: |
+    Mevcut backend MVP'nin HTTP sözleşmesi. Bu belge çalışan route, controller,
+    Zod şeması, servis ve hata middleware'i kaynak alınarak hazırlanmıştır.
+
+    Kimlik doğrulama ve cookie davranışı:
+
+    - Korumalı uçlarda access token `Authorization: Bearer <token>` başlığındadır.
+    - Refresh token, adı `chat_refresh_token` olan `HttpOnly`, `SameSite=Lax`,
+      `Path=/api/v1/auth` cookie'sinde tutulur; production ortamında ayrıca
+      `Secure` niteliği kullanılır.
+    - Production ortamında `/auth/refresh` ve `/auth/logout` isteklerinin
+      `Origin` başlığı `FRONTEND_ORIGIN` ile bire bir aynı olmalıdır. Diğer
+      ortamlarda bu Origin kontrolü uygulanmaz.
+    - Register, login, refresh ve me cevapları `Cache-Control: no-store` taşır.
+
+    Cursor değerleri base64url kodlanmış, sürümlü JSON'dur. İstemci bunları
+    decode etmeye veya üretmeye çalışmadan opak string olarak geri göndermelidir.
+
+    Kaynaklar: `src/modules/auth/auth.middleware.ts`,
+    `src/modules/auth/refresh-cookie.ts`, `src/modules/auth/auth.routes.ts`,
+    `src/modules/auth/auth.controller.ts`, `src/shared/pagination/cursor.ts`.
+servers:
+  - url: http://api.chat.test:4000
+    description: README'de belirtilen varsayılan geliştirme adresi
+tags:
+  - name: Health
+    description: Liveness ve PostgreSQL readiness kontrolleri.
+  - name: Auth
+    description: Kayıt, oturum, token rotasyonu ve mevcut kullanıcı.
+  - name: Users
+    description: Aktif kullanıcı arama.
+  - name: Conversations
+    description: Doğrudan konuşma oluşturma, listeleme ve detay.
+  - name: Messages
+    description: İdempotent mesaj oluşturma ve geçmiş sayfalama.
+  - name: Reads
+    description: Monoton ilerleyen okundu watermark'ı.
+
+paths:
+  /api/v1/healthz:
+    get:
+      tags: [Health]
+      summary: Süreç canlılık kontrolü
+      operationId: getHealth
+      security: []
+      x-source-files:
+        - src/http/routes/health.routes.ts
+      responses:
+        "200":
+          description: HTTP süreci canlı
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: ok
+
+  /api/v1/readyz:
+    get:
+      tags: [Health]
+      summary: PostgreSQL hazır olma kontrolü
+      operationId: getReadiness
+      security: []
+      x-source-files:
+        - src/http/routes/health.routes.ts
+      responses:
+        "200":
+          description: PostgreSQL `SELECT 1` sorgusuna cevap verdi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              example:
+                status: ready
+        "503":
+          description: PostgreSQL erişilebilir değil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              example:
+                status: not_ready
+
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Kullanıcı kaydı ve oturum oluşturma
+      operationId: register
+      security: []
+      x-source-files:
+        - src/modules/auth/auth.routes.ts
+        - src/modules/auth/auth.schema.ts
+        - src/modules/auth/auth.controller.ts
+        - src/modules/auth/auth.service.ts
+        - src/modules/auth/auth.errors.ts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+            example:
+              email: alice@example.com
+              username: alice
+              displayName: Alice
+              password: correct-password
+      responses:
+        "201":
+          description: Kullanıcı ve oturum oluşturuldu; refresh cookie set edildi
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            Set-Cookie:
+              $ref: "#/components/headers/RefreshCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+              example:
+                user:
+                  id: 11111111-1111-4111-8111-111111111111
+                  email: alice@example.com
+                  username: alice
+                  displayName: Alice
+                  avatarUrl: null
+                  status: ACTIVE
+                  createdAt: "2030-01-01T00:00:00.000Z"
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "409":
+          description: E-posta, kullanıcı adı veya kullanıcı tekilliği çakıştı
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                emailAlreadyInUse:
+                  value:
+                    error:
+                      code: EMAIL_ALREADY_IN_USE
+                      message: The email is already in use
+                      requestId: 77777777-7777-4777-8777-777777777777
+                usernameAlreadyInUse:
+                  value:
+                    error:
+                      code: USERNAME_ALREADY_IN_USE
+                      message: The username is already in use
+                      requestId: 77777777-7777-4777-8777-777777777777
+                genericConflict:
+                  value:
+                    error:
+                      code: USER_ALREADY_EXISTS
+                      message: A user with these details already exists
+                      requestId: 77777777-7777-4777-8777-777777777777
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: E-posta ve parola ile oturum açma
+      operationId: login
+      security: []
+      x-source-files:
+        - src/modules/auth/auth.routes.ts
+        - src/modules/auth/auth.schema.ts
+        - src/modules/auth/auth.controller.ts
+        - src/modules/auth/auth.service.ts
+        - src/modules/auth/auth.errors.ts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            example:
+              email: alice@example.com
+              password: correct-password
+      responses:
+        "200":
+          description: Oturum açıldı; refresh cookie set edildi
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            Set-Cookie:
+              $ref: "#/components/headers/RefreshCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+              example:
+                user:
+                  id: 11111111-1111-4111-8111-111111111111
+                  email: alice@example.com
+                  username: alice
+                  displayName: Alice
+                  avatarUrl: null
+                  status: ACTIVE
+                  createdAt: "2030-01-01T00:00:00.000Z"
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: E-posta/parola eşleşmedi veya kullanıcı aktif değil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: The email or password is incorrect
+                  requestId: 77777777-7777-4777-8777-777777777777
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh token'ı döndürerek yeni access token alma
+      operationId: refreshAccessToken
+      # Cookie/Origin kaynakları: src/modules/auth/refresh-cookie.ts,
+      # src/modules/auth/auth.middleware.ts, src/modules/auth/auth.routes.ts.
+      security:
+        - refreshCookie: []
+      x-source-files:
+        - src/modules/auth/auth.routes.ts
+        - src/modules/auth/auth.controller.ts
+        - src/modules/auth/auth.middleware.ts
+        - src/modules/auth/refresh-cookie.ts
+        - src/modules/auth/sessions/auth-session.service.ts
+      parameters:
+        - $ref: "#/components/parameters/ProductionOrigin"
+      responses:
+        "200":
+          description: Refresh token döndürüldü; yeni cookie ve access token üretildi
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            Set-Cookie:
+              $ref: "#/components/headers/RefreshCookie"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshResponse"
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.rotated
+        "401":
+          description: Cookie yok, token geçersiz, iptal edilmiş, süresi dolmuş veya yarışta daha önce döndürülmüş
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_REFRESH_TOKEN
+                  message: The refresh token is invalid
+                  requestId: 77777777-7777-4777-8777-777777777777
+        "403":
+          $ref: "#/components/responses/CsrfError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Mevcut access token'a ait oturumu iptal etme
+      operationId: logout
+      # Bearer/Origin kaynakları: src/modules/auth/auth.middleware.ts,
+      # src/modules/auth/auth.routes.ts. Cookie temizleme kaynağı:
+      # src/modules/auth/refresh-cookie.ts.
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/auth/auth.routes.ts
+        - src/modules/auth/auth.controller.ts
+        - src/modules/auth/auth.middleware.ts
+        - src/modules/auth/refresh-cookie.ts
+      parameters:
+        - $ref: "#/components/parameters/ProductionOrigin"
+      responses:
+        "204":
+          description: Oturum iptal edildi; refresh cookie temizlendi; gövde yok
+          headers:
+            Set-Cookie:
+              description: |
+                `chat_refresh_token` cookie'sini
+                `Expires=Thu, 01 Jan 1970 00:00:00 GMT` ile temizler.
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "403":
+          $ref: "#/components/responses/CsrfError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Mevcut kullanıcıyı alma
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/auth/auth.routes.ts
+        - src/modules/auth/auth.controller.ts
+        - src/modules/auth/auth.middleware.ts
+        - src/modules/auth/auth.service.ts
+      responses:
+        "200":
+          description: Aktif kullanıcı
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserResponse"
+              example:
+                user:
+                  id: 11111111-1111-4111-8111-111111111111
+                  email: alice@example.com
+                  username: alice
+                  displayName: Alice
+                  avatarUrl: null
+                  status: ACTIVE
+                  createdAt: "2030-01-01T00:00:00.000Z"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users:
+    get:
+      tags: [Users]
+      summary: Aktif kullanıcıları kullanıcı adı veya görünen ad ile arama
+      operationId: searchUsers
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/users/users.routes.ts
+        - src/modules/users/users.schema.ts
+        - src/modules/users/users.controller.ts
+        - src/modules/users/users.service.ts
+        - src/modules/users/users.repository.ts
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: Trim edilir; kullanıcı adı ve görünen adda büyük/küçük harf duyarsız aranır. E-posta aranmaz.
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 80
+          example: bo
+        - name: cursor
+          in: query
+          required: false
+          description: Önceki cevabın `nextCursor` değeri; opak base64url string olarak kullanılmalıdır.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+          example: eyJ2IjoxLCJ1c2VybmFtZSI6ImJvYiIsImlkIjoiMjIyMjIyMjItMjIyMi00MjIyLTgyMjItMjIyMjIyMjIyMjIyIn0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+          example: 20
+      responses:
+        "200":
+          description: Eşleşen kullanıcı sayfası; mevcut kullanıcı hariç tutulur
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSearchResponse"
+              example:
+                items:
+                  - id: 22222222-2222-4222-8222-222222222222
+                    username: bob
+                    displayName: Bob
+                    avatarUrl: null
+                nextCursor: null
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/conversations/direct:
+    post:
+      tags: [Conversations]
+      summary: Doğrudan konuşmayı oluşturma veya var olanı döndürme
+      operationId: createDirectConversation
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/conversations/conversation.routes.ts
+        - src/modules/conversations/conversation.schema.ts
+        - src/modules/conversations/conversation.controller.ts
+        - src/modules/conversations/conversation.service.ts
+        - src/modules/conversations/conversation.errors.ts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDirectConversationRequest"
+            example:
+              userId: 22222222-2222-4222-8222-222222222222
+      responses:
+        "200":
+          description: Aynı iki kullanıcı için konuşma zaten vardı
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectConversation"
+              example:
+                id: 33333333-3333-4333-8333-333333333333
+                type: DIRECT
+                title: null
+                createdAt: "2030-01-01T00:00:00.000Z"
+                otherUser:
+                  id: 22222222-2222-4222-8222-222222222222
+                  username: bob
+                  displayName: Bob
+                  avatarUrl: null
+        "201":
+          description: Yeni doğrudan konuşma oluşturuldu
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectConversation"
+              example:
+                id: 33333333-3333-4333-8333-333333333333
+                type: DIRECT
+                title: null
+                createdAt: "2030-01-01T00:00:00.000Z"
+                otherUser:
+                  id: 22222222-2222-4222-8222-222222222222
+                  username: bob
+                  displayName: Bob
+                  avatarUrl: null
+        "400":
+          description: Body doğrulanamadı veya kullanıcı kendisiyle konuşma başlatmaya çalıştı
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                validation:
+                  $ref: "#/components/examples/ValidationErrorExample"
+                cannotMessageSelf:
+                  value:
+                    error:
+                      code: CANNOT_MESSAGE_SELF
+                      message: You cannot start a conversation with yourself
+                      requestId: 77777777-7777-4777-8777-777777777777
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          description: Hedef kullanıcı yok, aktif değil veya soft-delete edilmiş
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: USER_NOT_FOUND
+                  message: User not found
+                  requestId: 77777777-7777-4777-8777-777777777777
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/conversations:
+    get:
+      tags: [Conversations]
+      summary: Doğrudan konuşmaları listeleme
+      operationId: listConversations
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/conversations/conversation.routes.ts
+        - src/modules/conversations/conversation.schema.ts
+        - src/modules/conversations/conversation.controller.ts
+        - src/modules/conversations/conversation.service.ts
+        - src/modules/conversations/conversation.repository.ts
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          description: Önceki cevabın `nextCursor` değeri; opak base64url string olarak kullanılmalıdır.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 768
+          example: eyJ2IjoxLCJsYXN0TWVzc2FnZUF0IjoiMjAzMC0wMS0wMVQwMDowMDowMC4wMDBaIiwiY3JlYXRlZEF0IjoiMjAyOS0xMi0zMVQwMDowMDowMC4wMDBaIiwiaWQiOiIzMzMzMzMzMy0zMzMzLTQzMzMtODMzMy0zMzMzMzMzMzMzMzMifQ
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+          example: 20
+      responses:
+        "200":
+          description: Son mesaja göre azalan sırada konuşma sayfası
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationListResponse"
+              example:
+                items:
+                  - id: 33333333-3333-4333-8333-333333333333
+                    type: DIRECT
+                    title: null
+                    createdAt: "2029-12-31T00:00:00.000Z"
+                    otherUser:
+                      id: 22222222-2222-4222-8222-222222222222
+                      username: bob
+                      displayName: Bob
+                      avatarUrl: null
+                    lastMessageAt: "2030-01-01T00:00:00.000Z"
+                    lastMessage:
+                      id: 44444444-4444-4444-8444-444444444444
+                      body: Merhaba
+                      senderId: 22222222-2222-4222-8222-222222222222
+                      createdAt: "2030-01-01T00:00:00.000Z"
+                    unreadCount: 1
+                nextCursor: null
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/conversations/{conversationId}:
+    get:
+      tags: [Conversations]
+      summary: Üyesi olunan doğrudan konuşmayı alma
+      operationId: getConversation
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/conversations/conversation.routes.ts
+        - src/modules/conversations/conversation.schema.ts
+        - src/modules/conversations/conversation.controller.ts
+        - src/modules/conversations/conversation.service.ts
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "200":
+          description: Konuşma detayı
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectConversation"
+              example:
+                id: 33333333-3333-4333-8333-333333333333
+                type: DIRECT
+                title: null
+                createdAt: "2030-01-01T00:00:00.000Z"
+                otherUser:
+                  id: 22222222-2222-4222-8222-222222222222
+                  username: bob
+                  displayName: Bob
+                  avatarUrl: null
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/conversations/{conversationId}/messages:
+    post:
+      tags: [Messages]
+      summary: Metin mesajı oluşturma veya idempotent retry sonucunu döndürme
+      operationId: createMessage
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/messages/message.routes.ts
+        - src/modules/messages/message.schema.ts
+        - src/modules/messages/message.controller.ts
+        - src/modules/messages/message.service.ts
+        - src/modules/messages/message.repository.ts
+        - prisma/schema.prisma
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMessageRequest"
+            example:
+              clientMessageId: 55555555-5555-4555-8555-555555555555
+              content:
+                type: text
+                text: Merhaba
+      responses:
+        "200":
+          description: Aynı gönderici ve `clientMessageId` ile mesaj zaten vardı; var olan mesaj döndü ve yeni event yayınlanmadı
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+              example:
+                id: 44444444-4444-4444-8444-444444444444
+                conversationId: 33333333-3333-4333-8333-333333333333
+                senderId: 11111111-1111-4111-8111-111111111111
+                clientMessageId: 55555555-5555-4555-8555-555555555555
+                kind: TEXT
+                body: Merhaba
+                createdAt: "2030-01-01T00:00:00.000Z"
+                editedAt: null
+        "201":
+          description: Yeni mesaj oluşturuldu ve commit sonrasında `message:created` yayınlandı
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+              example:
+                id: 44444444-4444-4444-8444-444444444444
+                conversationId: 33333333-3333-4333-8333-333333333333
+                senderId: 11111111-1111-4111-8111-111111111111
+                clientMessageId: 55555555-5555-4555-8555-555555555555
+                kind: TEXT
+                body: Merhaba
+                createdAt: "2030-01-01T00:00:00.000Z"
+                editedAt: null
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Messages]
+      summary: Mesaj geçmişini listeleme
+      operationId: listMessages
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/messages/message.routes.ts
+        - src/modules/messages/message.schema.ts
+        - src/modules/messages/message.controller.ts
+        - src/modules/messages/message.service.ts
+        - src/modules/messages/message.repository.ts
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+        - name: before
+          in: query
+          required: false
+          description: Önceki cevabın `nextCursor` değeri; bu cursor'dan daha eski mesajları ister.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+          example: eyJ2IjoxLCJjcmVhdGVkQXQiOiIyMDMwLTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJpZCI6IjQ0NDQ0NDQ0LTQ0NDQtNDQ0NC04NDQ0LTQ0NDQ0NDQ0NDQ0NCJ9
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          example: 50
+      responses:
+        "200":
+          description: Sayfa içindeki mesajlar kronolojik (eskiden yeniye) sırada döner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageHistoryResponse"
+              example:
+                items:
+                  - id: 44444444-4444-4444-8444-444444444444
+                    conversationId: 33333333-3333-4333-8333-333333333333
+                    senderId: 11111111-1111-4111-8111-111111111111
+                    clientMessageId: 55555555-5555-4555-8555-555555555555
+                    kind: TEXT
+                    body: Merhaba
+                    createdAt: "2030-01-01T00:00:00.000Z"
+                    editedAt: null
+                nextCursor: null
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/conversations/{conversationId}/read:
+    put:
+      tags: [Reads]
+      summary: Kullanıcının okundu watermark'ını ileri taşıma
+      operationId: updateReadWatermark
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/reads/read.routes.ts
+        - src/modules/reads/read.schema.ts
+        - src/modules/reads/read.controller.ts
+        - src/modules/reads/read.service.ts
+        - src/modules/reads/read.repository.ts
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateReadRequest"
+            example:
+              throughMessageId: 44444444-4444-4444-8444-444444444444
+      responses:
+        "200":
+          description: Watermark oluşturuldu, ileri taşındı veya daha eski/eşit hedefte değişmedi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadWatermarkResponse"
+              example:
+                conversationId: 33333333-3333-4333-8333-333333333333
+                throughMessageId: 44444444-4444-4444-8444-444444444444
+                readAt: "2030-01-01T00:00:00.000Z"
+                status: advanced
+        "400":
+          description: UUID/body doğrulaması başarısız veya mesaj bu konuşmaya ait değil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                validation:
+                  $ref: "#/components/examples/ValidationErrorExample"
+                wrongConversation:
+                  value:
+                    error:
+                      code: VALIDATION_ERROR
+                      message: The request is invalid
+                      details:
+                        issues:
+                          - path: body.throughMessageId
+                            message: Message does not belong to this conversation
+                      requestId: 77777777-7777-4777-8777-777777777777
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        `Authorization: Bearer <access-token>`. JWT doğrulandıktan sonra token'daki
+        `sid` ve `sub`, aktif ve kullanıcıya ait DB oturumuna karşı kontrol edilir.
+        Kaynak: `src/modules/auth/auth.middleware.ts`,
+        `src/modules/auth/auth.service.ts`,
+        `src/modules/auth/sessions/auth-session.repository.ts`.
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: chat_refresh_token
+      description: |
+        Opaque refresh token. `HttpOnly`, `SameSite=Lax`,
+        `Path=/api/v1/auth`; production'da `Secure`.
+        Kaynak: `src/modules/auth/auth.constants.ts`,
+        `src/modules/auth/refresh-cookie.ts`.
+
+  parameters:
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 33333333-3333-4333-8333-333333333333
+    ProductionOrigin:
+      name: Origin
+      in: header
+      required: false
+      description: |
+        Production ortamında zorunludur ve `FRONTEND_ORIGIN` ile bire bir
+        karşılaştırılır; eşleşmezse `403 CSRF_VALIDATION_FAILED` döner.
+        Development/test ortamında middleware bu kontrolü atlar.
+        Kaynak: `src/modules/auth/auth.routes.ts`,
+        `src/modules/auth/auth.middleware.ts`.
+      schema:
+        type: string
+        format: uri
+      example: https://chat.example.com
+
+  headers:
+    NoStore:
+      description: Hassas auth cevabının cache'lenmesini engeller.
+      schema:
+        type: string
+        const: no-store
+    RefreshCookie:
+      description: |
+        `chat_refresh_token=<opaque>; Path=/api/v1/auth; HttpOnly; SameSite=Lax`.
+        `Max-Age` ve `Expires` session süresinden hesaplanır; production'da
+        `Secure` eklenir. Kaynak: `src/modules/auth/refresh-cookie.ts`.
+      schema:
+        type: string
+
+  responses:
+    ValidationError:
+      description: Zod/request doğrulaması veya bozuk JSON
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            validation:
+              $ref: "#/components/examples/ValidationErrorExample"
+            invalidJson:
+              value:
+                error:
+                  code: INVALID_JSON
+                  message: Request body contains invalid JSON
+                  requestId: 77777777-7777-4777-8777-777777777777
+    BearerUnauthorized:
+      description: Bearer header yok/bozuk veya access token/DB oturumu geçersiz
+      headers:
+        WWW-Authenticate:
+          description: Bearer challenge
+          schema:
+            type: string
+            const: 'Bearer realm="chat-api"'
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            missingBearer:
+              value:
+                error:
+                  code: AUTHENTICATION_REQUIRED
+                  message: Authentication is required
+                  requestId: 77777777-7777-4777-8777-777777777777
+            invalidToken:
+              value:
+                error:
+                  code: INVALID_TOKEN
+                  message: The token is invalid
+                  requestId: 77777777-7777-4777-8777-777777777777
+    CsrfError:
+      description: Production `Origin` başlığı `FRONTEND_ORIGIN` ile eşleşmedi
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: CSRF_VALIDATION_FAILED
+              message: The request origin is not allowed
+              requestId: 77777777-7777-4777-8777-777777777777
+    ConversationNotFound:
+      description: Konuşma bulunamadı veya kullanıcı aktif üye değil; iki durum aynı cevapla gizlenir
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: CONVERSATION_NOT_FOUND
+              message: Conversation not found
+              requestId: 77777777-7777-4777-8777-777777777777
+    PayloadTooLarge:
+      description: JSON gövdesi 1 MiB sınırını aştı
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: PAYLOAD_TOO_LARGE
+              message: Request body is too large
+              requestId: 77777777-7777-4777-8777-777777777777
+    InternalError:
+      description: Beklenmeyen sunucu hatası; iç hata ayrıntısı istemciye açılmaz
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: INTERNAL_SERVER_ERROR
+              message: An unexpected error occurred
+              requestId: 77777777-7777-4777-8777-777777777777
+
+  examples:
+    ValidationErrorExample:
+      value:
+        error:
+          code: VALIDATION_ERROR
+          message: The request is invalid
+          details:
+            issues:
+              - path: body.email
+                message: Invalid email address
+          requestId: 77777777-7777-4777-8777-777777777777
+
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, username, displayName, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+          description: Trim edilir ve küçük harfe çevrilir.
+        username:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Trim edilir.
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Trim edilir.
+        password:
+          type: string
+          format: password
+          minLength: 12
+          maxLength: 128
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+          description: Trim edilir ve küçük harfe çevrilir.
+        password:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 128
+    PublicUser:
+      type: object
+      additionalProperties: false
+      required: [id, email, username, displayName, avatarUrl, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        username:
+          type: string
+        displayName:
+          type: string
+        avatarUrl:
+          type: [string, "null"]
+        status:
+          type: string
+          enum: [ACTIVE, DISABLED]
+        createdAt:
+          type: string
+          format: date-time
+    PublicPeerUser:
+      type: object
+      additionalProperties: false
+      required: [id, username, displayName, avatarUrl]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+        avatarUrl:
+          type: [string, "null"]
+    AuthResponse:
+      type: object
+      additionalProperties: false
+      required: [user, accessToken]
+      properties:
+        user:
+          $ref: "#/components/schemas/PublicUser"
+        accessToken:
+          type: string
+    RefreshResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken]
+      properties:
+        accessToken:
+          type: string
+    CurrentUserResponse:
+      type: object
+      additionalProperties: false
+      required: [user]
+      properties:
+        user:
+          $ref: "#/components/schemas/PublicUser"
+    UserSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicPeerUser"
+        nextCursor:
+          type: [string, "null"]
+    CreateDirectConversationRequest:
+      type: object
+      additionalProperties: false
+      required: [userId]
+      properties:
+        userId:
+          type: string
+          format: uuid
+    DirectConversation:
+      type: object
+      additionalProperties: false
+      required: [id, type, title, createdAt, otherUser]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          const: DIRECT
+        title:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        otherUser:
+          $ref: "#/components/schemas/PublicPeerUser"
+    LastMessage:
+      type: object
+      additionalProperties: false
+      required: [id, body, senderId, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        body:
+          type: string
+        senderId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+    ListedConversation:
+      type: object
+      additionalProperties: false
+      required: [id, type, title, createdAt, otherUser, lastMessageAt, lastMessage, unreadCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          const: DIRECT
+        title:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        otherUser:
+          $ref: "#/components/schemas/PublicPeerUser"
+        lastMessageAt:
+          type: [string, "null"]
+          format: date-time
+        lastMessage:
+          oneOf:
+            - $ref: "#/components/schemas/LastMessage"
+            - type: "null"
+        unreadCount:
+          type: integer
+          minimum: 0
+    ConversationListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ListedConversation"
+        nextCursor:
+          type: [string, "null"]
+    CreateMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [clientMessageId, content]
+      properties:
+        clientMessageId:
+          type: string
+          format: uuid
+        content:
+          type: object
+          additionalProperties: false
+          required: [type, text]
+          properties:
+            type:
+              type: string
+              const: text
+            text:
+              type: string
+              minLength: 1
+              maxLength: 4000
+              description: Kaydedilmeden önce trim edilir.
+    Message:
+      type: object
+      additionalProperties: false
+      required: [id, conversationId, senderId, clientMessageId, kind, body, createdAt, editedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        senderId:
+          type: string
+          format: uuid
+        clientMessageId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          const: TEXT
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        editedAt:
+          type: [string, "null"]
+          format: date-time
+    MessageHistoryResponse:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        nextCursor:
+          type: [string, "null"]
+    UpdateReadRequest:
+      type: object
+      additionalProperties: false
+      required: [throughMessageId]
+      properties:
+        throughMessageId:
+          type: string
+          format: uuid
+    ReadWatermarkResponse:
+      type: object
+      additionalProperties: false
+      required: [conversationId, throughMessageId, readAt, status]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        throughMessageId:
+          type: string
+          format: uuid
+        readAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [created, advanced, unchanged]
+    ValidationIssue:
+      type: object
+      additionalProperties: false
+      required: [path, message]
+      properties:
+        path:
+          type: string
+        message:
+          type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+              properties:
+                issues:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/ValidationIssue"
+            requestId:
+              type: string

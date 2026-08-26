@@ -7,6 +7,19 @@ export default defineConfig({
     clearMocks: true,
     restoreMocks: true,
     include: ["src/**/*.test.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary", "html"],
+      reportsDirectory: "coverage",
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.test.ts", "src/generated/**"],
+      thresholds: {
+        lines: 70,
+        functions: 70,
+        branches: 70,
+        statements: 70,
+      },
+    },
     env: {
       NODE_ENV: "test",
       DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/chat_test",
