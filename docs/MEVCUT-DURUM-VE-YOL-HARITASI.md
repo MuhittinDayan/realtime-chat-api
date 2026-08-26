@@ -193,7 +193,7 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 - Presence kayıtları süreç içindeki `Map` üzerinde tutuluyor. Birden fazla API instance'ında global online/offline durumu doğru çalışmaz.
 - Socket.IO için Redis adapter veya başka bir çapraz-instance yayın katmanı yok; odalar ve event'ler tek süreçle sınırlı.
 - Veritabanı commit'inden sonra Socket.IO'ya doğrudan yayın yapılıyor. Süreç çökmesi veya publisher hatasında kayıt kalıcı olup event kaybolabilir; outbox/retry mekanizması yok.
-- Mesaj/presence yükü için rate limit, backpressure ve yük testi tanımlı değil.
+- HTTP mesaj oluşturma ve Socket.IO `typing:set` için süreç içi rate limit vardır; dağıtık kota, genel backpressure ve yük testi henüz yoktur.
 
 ### Teslimat ve operasyon
 
@@ -205,10 +205,10 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 
 ### Güvenlik sertleştirmesi
 
-- Auth ve mesaj uçlarına kullanıcı/IP bazlı rate limiting eklenmeli.
-- Güvenlik header'ları için açık bir politika (ör. Helmet veya eşdeğer manuel ayarlar) tanımlanmalı.
+- Auth, kullanıcı arama ve mesaj oluşturma uçlarında IP/kullanıcı bazlı bağımsız rate limitler; `typing:set` için socket bazlı flood-control vardır.
+- Helmet güvenlik header'ları uygulanır; HSTS yalnızca production ortamında etkinleşir.
 - Cross-site frontend ihtiyacı oluşursa mevcut `SameSite=Lax` yaklaşımı yeterli olmaz; `SameSite=None; Secure` ile ayrı bir CSRF token mekanizması gerekir.
-- Bağımlılık taraması, secret taraması ve düzenli güvenlik güncellemesi CI'a eklenmeli.
+- Production dependency audit CI'dadır. Gitleaks ile çalışma ağacı ve Git geçmişi taranmıştır; secret taramasının CI'da otomatik çalıştırılması henüz eklenmemiştir.
 
 ## 7. Önerilen geliştirme sırası
 
@@ -218,7 +218,7 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 2. **Tamamlandı — Gerçek DB sözleşme testleri.** Beş kritik frontend/backend davranışı PostgreSQL üzerinde doğrulanıyor.
 3. **Büyük ölçüde tamamlandı — CI kalite kapısı.** `npm ci`, tek generate, typecheck, DB migration, coverage'lı test ve build seri çalışıyor. Lint/format henüz yok.
 4. **Tamamlandı — API sözleşmesi.** OpenAPI, Socket.IO sözleşmesi ve entegrasyon örnekleri yayınlandı.
-5. **Bekliyor — Temel güvenlik sertleştirmesi.** Auth, kullanıcı arama ve mesaj gönderimine uygun rate limit; güvenlik header'ları; dependency/secret taraması ekle.
+5. **Tamamlandı — Temel güvenlik sertleştirmesi.** Auth, kullanıcı arama, mesaj ve typing rate limitleri; Helmet header'ları; dependency audit ve Git geçmişi secret taraması uygulandı.
 
 P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritabanını ve API'yi çalıştırabilmeli; CI temiz kurulumda geçmeli; en az bir gerçek PostgreSQL uçtan uca senaryosu bulunmalı; frontend geliştiricisi güncel sözleşmeyi kullanarak kendi istemci uygulamasını geliştirebilmeli.
 
@@ -255,7 +255,7 @@ P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritaba
 2. ~~Gerçek PostgreSQL kullanan kritik akış entegrasyon testi~~
 3. ~~CI pipeline ve tek seferlik Prisma generate düzeni~~
 4. ~~OpenAPI başlangıç belgesi ve Socket.IO event dokümanı~~
-5. Rate limiting ve güvenlik header'ları
+5. ~~Rate limiting ve güvenlik header'ları~~
 
 Bu sprintin sonunda mevcut MVP'nin “benim makinemde çalışıyor” seviyesinden tekrarlanabilir, sözleşmesi bilinen ve güvenle genişletilebilir bir backend tabanına taşınması hedeflenmelidir. Bundan sonraki sprintte grup konuşmaları ile mesaj düzenleme/silme birlikte ele alınabilir.
 

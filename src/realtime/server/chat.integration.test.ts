@@ -30,6 +30,7 @@ import type { Clock } from "../../shared/time/clock.js";
 import { SocketMessagePublisher } from "../messages/message-publisher.js";
 import { ConnectionRegistry } from "../presence/connection-registry.js";
 import { SocketPresencePublisher } from "../presence/presence-publisher.js";
+import type { SocketEventRateLimitPolicy } from "../rate-limit/socket-event-rate-limiter.js";
 import type {
   PresenceRepository,
   PresenceUserRecord,
@@ -189,7 +190,10 @@ interface HarnessPresenceOptions {
   publisher: SocketPresencePublisher;
 }
 
-async function createHarness(presence?: HarnessPresenceOptions): Promise<{
+async function createHarness(
+  presence?: HarnessPresenceOptions,
+  typingLimit?: SocketEventRateLimitPolicy,
+): Promise<{
   httpServer: HttpServer;
   url: string;
   access: FakeConversationAccess;
@@ -218,6 +222,9 @@ async function createHarness(presence?: HarnessPresenceOptions): Promise<{
       : { presencePublisher: presence.publisher }),
     messagePublisher: publisher,
     clock: fixedClock,
+    ...(typingLimit === undefined
+      ? {}
+      : { typingRateLimitPolicy: typingLimit }),
   });
 
   await new Promise<void>((resolve) => {
@@ -449,6 +456,40 @@ describe("/chat Socket.IO integration", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(received).toBe(false);
+  });
+
+  it("silently drops typing events above the per-socket flood limit", async () => {
+    const { url } = await createHarness(undefined, {
+      windowMs: 5_000,
+      limit: 1,
+    });
+    const aliceClient = newClient(url, "valid-alice");
+    const bobClient = newClient(url, "valid-bob");
+    await Promise.all([
+      connectAndWaitForReady(aliceClient),
+      connectAndWaitForReady(bobClient),
+    ]);
+    await Promise.all([subscribe(aliceClient), subscribe(bobClient)]);
+    let receivedCount = 0;
+    const receivedAllowedEvent = new Promise<void>((resolve) => {
+      bobClient.on("typing:updated", () => {
+        receivedCount += 1;
+        resolve();
+      });
+    });
+
+    aliceClient.emit("typing:set", {
+      conversationId: CONVERSATION_ID,
+      isTyping: true,
+    });
+    await receivedAllowedEvent;
+    aliceClient.emit("typing:set", {
+      conversationId: CONVERSATION_ID,
+      isTyping: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(receivedCount).toBe(1);
   });
 
   it("publishes presence transitions only to direct peers", async () => {

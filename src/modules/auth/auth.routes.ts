@@ -1,6 +1,11 @@
 import { Router, type RequestHandler } from "express";
 
 import { env } from "../../config/env.js";
+import {
+  loginRateLimit,
+  refreshRateLimit,
+  registerRateLimit,
+} from "../../http/middleware/rate-limit.js";
 import { systemClock } from "../../shared/time/clock.js";
 import { authService } from "./auth-core.js";
 import { AuthController } from "./auth.controller.js";
@@ -16,6 +21,9 @@ export interface CreateAuthRouterOptions {
   controller: AuthController;
   authenticationMiddleware: RequestHandler;
   trustedOriginMiddleware: RequestHandler;
+  loginRateLimitMiddleware?: RequestHandler;
+  registerRateLimitMiddleware?: RequestHandler;
+  refreshRateLimitMiddleware?: RequestHandler;
 }
 
 export function createAuthRouter(options: CreateAuthRouterOptions): Router {
@@ -23,14 +31,17 @@ export function createAuthRouter(options: CreateAuthRouterOptions): Router {
 
   router.post(
     "/register",
+    options.registerRateLimitMiddleware ?? registerRateLimit,
     withValidatedBody(registerSchema, options.controller.register),
   );
   router.post(
     "/login",
+    options.loginRateLimitMiddleware ?? loginRateLimit,
     withValidatedBody(loginSchema, options.controller.login),
   );
   router.post(
     "/refresh",
+    options.refreshRateLimitMiddleware ?? refreshRateLimit,
     options.trustedOriginMiddleware,
     options.controller.refresh,
   );

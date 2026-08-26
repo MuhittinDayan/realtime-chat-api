@@ -1,8 +1,9 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
 import { createApp } from "../../app.js";
+import { createHttpRateLimiter } from "../../http/middleware/rate-limit.js";
 import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
@@ -68,19 +69,57 @@ class FakeMessageService implements MessageHttpService {
   }
 }
 
-function createTestApp(service: MessageHttpService) {
+const noRateLimit: RequestHandler = (_request, _response, next) => next();
+
+function createTestApp(
+  service: MessageHttpService,
+  createRateLimitMiddleware: RequestHandler = noRateLimit,
+) {
   const apiRouter = Router();
   apiRouter.use(
     createAuthenticationMiddleware(new FakeAuthenticator()),
   );
   apiRouter.use(
     "/conversations/:conversationId/messages",
-    createMessageRouter(new MessageController(service)),
+    createMessageRouter(
+      new MessageController(service),
+      createRateLimitMiddleware,
+    ),
   );
   return createApp({ apiRouter });
 }
 
 describe("message HTTP routes", () => {
+  it("rate limits message creation per authenticated user", async () => {
+    const app = createTestApp(
+      new FakeMessageService(),
+      createHttpRateLimiter({
+        identifier: "test-message-create",
+        windowMs: 60_000,
+        limit: 1,
+        scope: "user",
+      }),
+    );
+    const payload = {
+      clientMessageId: CLIENT_MESSAGE_ID,
+      content: { type: "text", text: "hello" },
+    };
+
+    await request(app)
+      .post(`/api/v1/conversations/${CONVERSATION_ID}/messages`)
+      .set("Authorization", "Bearer token")
+      .send(payload)
+      .expect(201);
+    const rejected = await request(app)
+      .post(`/api/v1/conversations/${CONVERSATION_ID}/messages`)
+      .set("Authorization", "Bearer token")
+      .send(payload)
+      .expect(429);
+
+    expect(rejected.body.error.code).toBe("RATE_LIMIT_EXCEEDED");
+    expect(Number(rejected.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
   it("creates a trimmed text message", async () => {
     const service = new FakeMessageService();
     const response = await request(createTestApp(service))

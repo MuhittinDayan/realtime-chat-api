@@ -6,6 +6,11 @@ import type { ConversationAccessService } from "../../modules/messages/message.s
 import type { Clock } from "../../shared/time/clock.js";
 import { createSocketAuthenticationMiddleware } from "../auth/socket-auth.middleware.js";
 import type { PresenceLifecycleService } from "../presence/presence.service.js";
+import {
+  SocketEventRateLimiter,
+  type SocketEventRateLimitPolicy,
+  typingRateLimitPolicy,
+} from "../rate-limit/socket-event-rate-limiter.js";
 import { conversationRoom, userRoom } from "../rooms/room-names.js";
 import type {
   ChatClientToServerEvents,
@@ -43,6 +48,7 @@ export interface ConfigureChatNamespaceOptions {
   conversationAccessService: ConversationAccessService;
   presenceService: PresenceLifecycleService;
   clock: Clock;
+  typingRateLimitPolicy?: SocketEventRateLimitPolicy;
 }
 
 export function configureChatNamespace(
@@ -53,6 +59,9 @@ export function configureChatNamespace(
 
   namespace.on("connection", (socket) => {
     const { userId, sessionId: _sessionId } = socket.data;
+    const typingRateLimiter = new SocketEventRateLimiter(
+      options.typingRateLimitPolicy ?? typingRateLimitPolicy,
+    );
     const connected = options.presenceService.handleConnected(
       userId,
       socket.id,
@@ -115,6 +124,12 @@ export function configureChatNamespace(
     });
 
     socket.on("typing:set", (payload) => {
+      const now = options.clock.now();
+
+      if (!typingRateLimiter.tryAcquire(now)) {
+        return;
+      }
+
       const parsed = typingEventSchema.safeParse(payload);
 
       if (!parsed.success) {
@@ -131,9 +146,7 @@ export function configureChatNamespace(
         conversationId: parsed.data.conversationId,
         userId,
         isTyping: parsed.data.isTyping,
-        expiresAt: new Date(
-          options.clock.now().getTime() + 5_000,
-        ).toISOString(),
+        expiresAt: new Date(now.getTime() + 5_000).toISOString(),
       });
     });
 
