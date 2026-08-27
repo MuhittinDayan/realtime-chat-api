@@ -526,10 +526,48 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/conversations/group:
+    post:
+      tags: [Conversations]
+      summary: Create a group conversation
+      operationId: createGroupConversation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGroupConversationRequest"
+            example:
+              title: Product team
+              userIds:
+                - 22222222-2222-4222-8222-222222222222
+                - 33333333-3333-4333-8333-333333333333
+      responses:
+        "201":
+          description: Group created; caller is OWNER and requested users are MEMBER
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupConversation"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          description: At least one requested user is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/conversations:
     get:
       tags: [Conversations]
-      summary: Doğrudan konuşmaları listeleme
+      summary: Aktif DIRECT ve GROUP konuşmalarını listeleme
       operationId: listConversations
       security:
         - bearerAuth: []
@@ -595,7 +633,7 @@ paths:
   /api/v1/conversations/{conversationId}:
     get:
       tags: [Conversations]
-      summary: Üyesi olunan doğrudan konuşmayı alma
+      summary: Aktif üyesi olunan DIRECT veya GROUP konuşmasını alma
       operationId: getConversation
       security:
         - bearerAuth: []
@@ -612,7 +650,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/DirectConversation"
+                $ref: "#/components/schemas/Conversation"
               example:
                 id: 33333333-3333-4333-8333-333333333333
                 type: DIRECT
@@ -631,6 +669,180 @@ paths:
           $ref: "#/components/responses/ConversationNotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+
+    patch:
+      tags: [Conversations]
+      summary: Update a GROUP title
+      operationId: updateGroupTitle
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateGroupTitleRequest"
+      responses:
+        "200":
+          description: Updated group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupConversation"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "403":
+          $ref: "#/components/responses/InsufficientRole"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/conversations/{conversationId}/members:
+    post:
+      tags: [Conversations]
+      summary: Add or reactivate a GROUP member
+      operationId: addGroupMember
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserIdRequest"
+      responses:
+        "201":
+          description: Active MEMBER
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupMember"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "403":
+          $ref: "#/components/responses/InsufficientRole"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "409":
+          $ref: "#/components/responses/ConversationConflict"
+
+  /api/v1/conversations/{conversationId}/members/me:
+    delete:
+      tags: [Conversations]
+      summary: Leave a GROUP
+      operationId: leaveGroupConversation
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "204":
+          description: Membership deactivated with leftAt
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "409":
+          $ref: "#/components/responses/ConversationConflict"
+
+  /api/v1/conversations/{conversationId}/members/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/ConversationId"
+      - $ref: "#/components/parameters/UserId"
+    delete:
+      tags: [Conversations]
+      summary: Remove a GROUP member
+      operationId: removeGroupMember
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Membership deactivated and all target sockets removed from the room
+        "400":
+          description: Target is the caller; use /members/me
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "403":
+          $ref: "#/components/responses/InsufficientRole"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "409":
+          $ref: "#/components/responses/ConversationConflict"
+    patch:
+      tags: [Conversations]
+      summary: Change a member between MEMBER and ADMIN
+      operationId: updateGroupMemberRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateGroupMemberRoleRequest"
+      responses:
+        "200":
+          description: Updated member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupMember"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "403":
+          $ref: "#/components/responses/InsufficientRole"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "409":
+          $ref: "#/components/responses/ConversationConflict"
+
+  /api/v1/conversations/{conversationId}/owner:
+    put:
+      tags: [Conversations]
+      summary: Transfer GROUP ownership to an active member
+      operationId: transferGroupOwnership
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserIdRequest"
+      responses:
+        "200":
+          description: Previous OWNER is ADMIN and target is OWNER
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupConversation"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "403":
+          $ref: "#/components/responses/InsufficientRole"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "409":
+          $ref: "#/components/responses/ConversationConflict"
 
   /api/v1/conversations/{conversationId}/messages:
     post:
@@ -973,6 +1185,14 @@ components:
         type: string
         format: uuid
       example: 44444444-4444-4444-8444-444444444444
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 22222222-2222-4222-8222-222222222222
     ProductionOrigin:
       name: Origin
       in: header
@@ -1009,6 +1229,36 @@ components:
       example: 60
 
   responses:
+    InsufficientRole:
+      description: Active member role does not permit the operation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: INSUFFICIENT_ROLE
+              message: Your role does not permit this action
+              requestId: 77777777-7777-4777-8777-777777777777
+    ConversationConflict:
+      description: Membership, capacity, OWNER-target, or last-OWNER conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            ownership:
+              value:
+                error:
+                  code: CONFLICT
+                  message: Ownership must be transferred first
+                  requestId: 77777777-7777-4777-8777-777777777777
+            capacity:
+              value:
+                error:
+                  code: CONFLICT
+                  message: Group has reached the 100 active member limit
+                  requestId: 77777777-7777-4777-8777-777777777777
     RateLimited:
       description: İlgili endpoint'in bağımsız kotası aşıldı
       headers:
@@ -1286,6 +1536,49 @@ components:
         userId:
           type: string
           format: uuid
+    UserIdRequest:
+      type: object
+      additionalProperties: false
+      required: [userId]
+      properties:
+        userId:
+          type: string
+          format: uuid
+    CreateGroupConversationRequest:
+      type: object
+      additionalProperties: false
+      required: [title, userIds]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        userIds:
+          type: array
+          minItems: 2
+          maxItems: 99
+          uniqueItems: true
+          description: Creator is not included; creator plus these users must total at least 3.
+          items:
+            type: string
+            format: uuid
+    UpdateGroupTitleRequest:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+    UpdateGroupMemberRoleRequest:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [MEMBER, ADMIN]
     DirectConversation:
       type: object
       additionalProperties: false
@@ -1304,6 +1597,51 @@ components:
           format: date-time
         otherUser:
           $ref: "#/components/schemas/PublicPeerUser"
+    GroupMember:
+      type: object
+      additionalProperties: false
+      required: [userId, role, joinedAt, user]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [MEMBER, ADMIN, OWNER]
+        joinedAt:
+          type: string
+          format: date-time
+        user:
+          $ref: "#/components/schemas/PublicPeerUser"
+    GroupConversation:
+      type: object
+      additionalProperties: false
+      required: [id, type, title, createdAt, members]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          const: GROUP
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        createdAt:
+          type: string
+          format: date-time
+        members:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/GroupMember"
+    Conversation:
+      oneOf:
+        - $ref: "#/components/schemas/DirectConversation"
+        - $ref: "#/components/schemas/GroupConversation"
+      discriminator:
+        propertyName: type
     LastMessage:
       type: object
       additionalProperties: false
@@ -1324,7 +1662,7 @@ components:
         deletedAt:
           type: [string, "null"]
           format: date-time
-    ListedConversation:
+    ListedDirectConversation:
       type: object
       additionalProperties: false
       required: [id, type, title, createdAt, otherUser, lastMessageAt, lastMessage, unreadCount]
@@ -1352,6 +1690,43 @@ components:
         unreadCount:
           type: integer
           minimum: 0
+    ListedGroupConversation:
+      type: object
+      additionalProperties: false
+      required: [id, type, title, createdAt, members, lastMessageAt, lastMessage, unreadCount]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          const: GROUP
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        members:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/GroupMember"
+        lastMessageAt:
+          type: [string, "null"]
+          format: date-time
+        lastMessage:
+          oneOf:
+            - $ref: "#/components/schemas/LastMessage"
+            - type: "null"
+        unreadCount:
+          type: integer
+          minimum: 0
+    ListedConversation:
+      oneOf:
+        - $ref: "#/components/schemas/ListedDirectConversation"
+        - $ref: "#/components/schemas/ListedGroupConversation"
+      discriminator:
+        propertyName: type
     ConversationListResponse:
       type: object
       additionalProperties: false

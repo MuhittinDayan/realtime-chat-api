@@ -57,6 +57,23 @@ Temiz bir makinede:
 
 Varsayılan adres: `http://api.chat.test:4000`
 
+Development ve test ortamlarında Swagger UI:
+
+```text
+http://api.chat.test:4000/api-docs/
+```
+
+Ham OpenAPI 3.1 sözleşmesi:
+
+```text
+http://api.chat.test:4000/api-docs/openapi.yaml
+```
+
+Swagger UI'da önce `POST /api/v1/auth/login` çalıştırılır. Cevaptaki
+`accessToken`, sağ üstteki **Authorize** penceresindeki Bearer alanına
+yalnızca token değeri olarak girilir. Yetkilendirme sayfa yenilemelerinde
+korunur. Swagger route'ları production ortamında varsayılan olarak kapalıdır.
+
 Seed kullanıcıları `alice@example.com` ve `bob@example.com`, geliştirme
 parolası `ChatMvp123!` olarak oluşturulur. Kaynak: `prisma/seed.ts`.
 

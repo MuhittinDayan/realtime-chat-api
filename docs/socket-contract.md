@@ -44,7 +44,7 @@ Bağlantıda presence servisine `handleConnected(userId, socketId)`, kopuşta `h
 
 ### `conversation:subscribe`
 
-Aktif üyesi olunan bir doğrudan konuşmanın odasına katılır.
+Aktif üyesi olunan bir DIRECT veya GROUP konuşmasının odasına katılır.
 
 Payload:
 
@@ -339,6 +339,60 @@ Event yalnızca durum değişen kullanıcının aktif doğrudan konuşma eşleri
 
 Kaynaklar: `src/realtime/presence/connection-registry.ts`, `src/realtime/presence/presence.service.ts`, `src/realtime/presence/presence.repository.ts`, `src/realtime/presence/presence-publisher.ts`; testler: `src/realtime/presence/presence.service.test.ts`, `src/realtime/server/chat.integration.test.ts`.
 
+### GROUP yaşam döngüsü event'leri
+
+Bu event'lerin tamamı yalnızca `conversation:<conversationId>` odasına yayınlanır. HTTP işlemi başarısızsa event üretilmez. Tarihler ISO 8601 string'dir.
+
+`group:created` ve `group:updated` aynı zarfı kullanır:
+
+```json
+{
+  "conversation": {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "type": "GROUP",
+    "title": "Ürün ekibi",
+    "createdAt": "2030-01-01T00:00:00.000Z",
+    "members": [
+      {
+        "userId": "11111111-1111-4111-8111-111111111111",
+        "role": "OWNER",
+        "joinedAt": "2030-01-01T00:00:00.000Z",
+        "user": {
+          "id": "11111111-1111-4111-8111-111111111111",
+          "username": "alice",
+          "displayName": "Alice",
+          "avatarUrl": null
+        }
+      }
+    ]
+  }
+}
+```
+
+Üye event'leri:
+
+```ts
+"member:added" | "member:role-updated" -> {
+  conversationId: string;
+  member: GroupMember;
+}
+
+"member:removed" | "member:left" -> {
+  conversationId: string;
+  userId: string;
+}
+
+"ownership:transferred" -> {
+  conversationId: string;
+  previousOwnerId: string;
+  newOwnerId: string;
+}
+```
+
+`member:removed` ve `member:left` yayınlandıktan sonra hedef kullanıcının `user:<userId>` odasındaki tüm aktif socket'leri sunucu tarafından conversation odasından çıkarılır. İstemcinin unsubscribe göndermesine güvenilmez. Presence yetkisi değişmez; snapshot ve `presence:updated` görünürlüğü yalnızca aktif DIRECT eşleriyle sınırlıdır.
+
+Kaynaklar: `src/realtime/groups/group-publisher.ts`, `src/realtime/server/chat-events.ts`; çoklu socket oda çıkarma testi: `src/realtime/server/chat.integration.test.ts`.
+
 ## Frontend için zorunlu istemci davranışları
 
 1. Her yeni/reconnect olmuş socket'te `session:ready` beklenmeli ve ekranda açık/gerekli konuşmalar yeniden `conversation:subscribe` ile abone edilmelidir.
@@ -347,5 +401,6 @@ Kaynaklar: `src/realtime/presence/connection-registry.ts`, `src/realtime/presenc
 4. `message:updated` ve `message:deleted` geldiğinde frontend aynı mesaj kimliğini yerel listede yerinde güncellemelidir. Silinen mesaj listeden çıkarılmamalı; `body: null` tombstone olarak gösterilmelidir.
 5. `typing:updated.expiresAt` geldiğinde yerel gösterge için timer güncellenmelidir. Yeni typing event'i gelmezse bu zamanda gösterge istemci tarafından kapatılmalıdır.
 6. Presence snapshot'ında istenen her UUID'nin bulunacağı varsayılmamalıdır; yetkisiz/ilişkisiz kullanıcılar map'ten sessizce çıkarılır.
+7. `member:removed` veya `member:left` kendi kullanıcı kimliğiyle geldiğinde grup ekranı kapatılmalı ve conversation cache/listesi yenilenmelidir; sunucu socket'i odadan zaten çıkarmıştır.
 
 Bu maddelerin kaynak doğrulaması: `src/contracts/backend-contract.integration.test.ts` ve yukarıdaki ilgili üretim dosyaları.
