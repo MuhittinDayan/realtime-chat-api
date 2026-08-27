@@ -582,6 +582,7 @@ paths:
                       body: Merhaba
                       senderId: 22222222-2222-4222-8222-222222222222
                       createdAt: "2030-01-01T00:00:00.000Z"
+                      deletedAt: null
                     unreadCount: 1
                 nextCursor: null
         "400":
@@ -676,6 +677,7 @@ paths:
                 body: Merhaba
                 createdAt: "2030-01-01T00:00:00.000Z"
                 editedAt: null
+                deletedAt: null
         "201":
           description: Yeni mesaj oluşturuldu ve commit sonrasında `message:created` yayınlandı
           content:
@@ -691,6 +693,7 @@ paths:
                 body: Merhaba
                 createdAt: "2030-01-01T00:00:00.000Z"
                 editedAt: null
+                deletedAt: null
         "400":
           $ref: "#/components/responses/ValidationError"
         "401":
@@ -752,6 +755,7 @@ paths:
                     body: Merhaba
                     createdAt: "2030-01-01T00:00:00.000Z"
                     editedAt: null
+                    deletedAt: null
                 nextCursor: null
         "400":
           $ref: "#/components/responses/ValidationError"
@@ -759,6 +763,111 @@ paths:
           $ref: "#/components/responses/BearerUnauthorized"
         "404":
           $ref: "#/components/responses/ConversationNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/conversations/{conversationId}/messages/{messageId}:
+    patch:
+      tags: [Messages]
+      summary: Gönderenin metin mesajını düzenlemesi
+      operationId: updateMessage
+      description: |
+        Yalnızca mesajı gönderen aktif conversation üyesi düzenleyebilir. Trim
+        edilmiş içerik mevcut body ile aynıysa işlem idempotent no-op olur;
+        `editedAt` değişmez ve `message:updated` yayınlanmaz. Silinmiş mesaj
+        düzenlenemez.
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/messages/message.routes.ts
+        - src/modules/messages/message.schema.ts
+        - src/modules/messages/message.controller.ts
+        - src/modules/messages/message.service.ts
+        - src/modules/messages/message.repository.ts
+        - src/modules/messages/message.errors.ts
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/MessageId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMessageRequest"
+            example:
+              content:
+                type: text
+                text: Düzenlenmiş mesaj
+      responses:
+        "200":
+          description: Güncel mesaj; değişiklik yapıldıysa commit sonrasında `message:updated` yayınlanır
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+              example:
+                id: 44444444-4444-4444-8444-444444444444
+                conversationId: 33333333-3333-4333-8333-333333333333
+                senderId: 11111111-1111-4111-8111-111111111111
+                clientMessageId: 55555555-5555-4555-8555-555555555555
+                kind: TEXT
+                body: Düzenlenmiş mesaj
+                createdAt: "2030-01-01T00:00:00.000Z"
+                editedAt: "2030-01-01T00:03:00.000Z"
+                deletedAt: null
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/MessageMutationNotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Messages]
+      summary: Gönderenin mesajını soft-delete etmesi
+      operationId: deleteMessage
+      description: |
+        Kayıt DB'den silinmez. İlk başarılı silmede `deletedAt` yazılır ve commit
+        sonrasında `message:deleted` yayınlanır. Aynı gönderenin tekrarlanan silme
+        isteği aynı tombstone'u döndürür; timestamp değişmez ve ikinci event
+        yayınlanmaz.
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/messages/message.routes.ts
+        - src/modules/messages/message.controller.ts
+        - src/modules/messages/message.service.ts
+        - src/modules/messages/message.repository.ts
+        - src/modules/messages/message.errors.ts
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/MessageId"
+      responses:
+        "200":
+          description: İçeriği maskelenmiş mesaj tombstone'u
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+              example:
+                id: 44444444-4444-4444-8444-444444444444
+                conversationId: 33333333-3333-4333-8333-333333333333
+                senderId: 11111111-1111-4111-8111-111111111111
+                clientMessageId: 55555555-5555-4555-8555-555555555555
+                kind: TEXT
+                body: null
+                createdAt: "2030-01-01T00:00:00.000Z"
+                editedAt: "2030-01-01T00:03:00.000Z"
+                deletedAt: "2030-01-01T00:05:00.000Z"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/MessageMutationNotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -856,6 +965,14 @@ components:
         type: string
         format: uuid
       example: 33333333-3333-4333-8333-333333333333
+    MessageId:
+      name: messageId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 44444444-4444-4444-8444-444444444444
     ProductionOrigin:
       name: Origin
       in: header
@@ -976,6 +1093,28 @@ components:
               code: CONVERSATION_NOT_FOUND
               message: Conversation not found
               requestId: 77777777-7777-4777-8777-777777777777
+    MessageMutationNotFound:
+      description: |
+        Conversation bulunamadı/aktif üyelik yok veya mesaj bulunamadı,
+        gönderene ait değil ya da düzenleme sırasında zaten silinmiş. Varlık ve
+        yetki ayrıntıları 404 altında gizlenir.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            conversationNotFound:
+              value:
+                error:
+                  code: CONVERSATION_NOT_FOUND
+                  message: Conversation not found
+                  requestId: 77777777-7777-4777-8777-777777777777
+            messageNotFound:
+              value:
+                error:
+                  code: MESSAGE_NOT_FOUND
+                  message: Message not found
+                  requestId: 77777777-7777-4777-8777-777777777777
     PayloadTooLarge:
       description: JSON gövdesi 1 MiB sınırını aştı
       content:
@@ -1168,18 +1307,22 @@ components:
     LastMessage:
       type: object
       additionalProperties: false
-      required: [id, body, senderId, createdAt]
+      required: [id, body, senderId, createdAt, deletedAt]
       properties:
         id:
           type: string
           format: uuid
         body:
-          type: string
+          type: [string, "null"]
+          description: Soft-delete edilmiş son mesajda null; DB içeriği istemciye açılmaz.
         senderId:
           type: string
           format: uuid
         createdAt:
           type: string
+          format: date-time
+        deletedAt:
+          type: [string, "null"]
           format: date-time
     ListedConversation:
       type: object
@@ -1241,10 +1384,28 @@ components:
               minLength: 1
               maxLength: 4000
               description: Kaydedilmeden önce trim edilir.
+    UpdateMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          type: object
+          additionalProperties: false
+          required: [type, text]
+          properties:
+            type:
+              type: string
+              const: text
+            text:
+              type: string
+              minLength: 1
+              maxLength: 4000
+              description: Karşılaştırılmadan ve kaydedilmeden önce trim edilir.
     Message:
       type: object
       additionalProperties: false
-      required: [id, conversationId, senderId, clientMessageId, kind, body, createdAt, editedAt]
+      required: [id, conversationId, senderId, clientMessageId, kind, body, createdAt, editedAt, deletedAt]
       properties:
         id:
           type: string
@@ -1262,11 +1423,15 @@ components:
           type: string
           const: TEXT
         body:
-          type: string
+          type: [string, "null"]
+          description: Soft-delete edilmiş mesajda null; saklanan DB içeriği API'de açılmaz.
         createdAt:
           type: string
           format: date-time
         editedAt:
+          type: [string, "null"]
+          format: date-time
+        deletedAt:
           type: [string, "null"]
           format: date-time
     MessageHistoryResponse:

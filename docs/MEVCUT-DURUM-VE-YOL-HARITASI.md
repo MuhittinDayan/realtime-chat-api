@@ -10,11 +10,11 @@
 
 ## 1. Yönetici özeti
 
-Proje, bire bir mesajlaşmaya yönelik backend MVP'sinin ana akışlarını tamamlamış durumda. Kullanıcı kaydı ve oturum yönetimi, kullanıcı arama, doğrudan konuşma oluşturma/listeleme, mesaj gönderme ve geçmişi alma, okundu bilgisini ilerletme, Socket.IO üzerinden mesaj/okundu/typing/presence yayınlama kodda mevcut. Kod tabanı modüler, TypeScript strict kuralları açık ve servis–repository ayrımı genel olarak temiz.
+Proje, bire bir mesajlaşmaya yönelik backend MVP'sinin ana akışlarını tamamlamış durumda. Kullanıcı kaydı ve oturum yönetimi, kullanıcı arama, doğrudan konuşma oluşturma/listeleme, mesaj gönderme, düzenleme, soft-delete ve geçmişi alma, okundu bilgisini ilerletme, Socket.IO üzerinden mesaj/okundu/typing/presence yayınlama kodda mevcut. Kod tabanı modüler, TypeScript strict kuralları açık ve servis–repository ayrımı genel olarak temiz.
 
-FAZ 8 ve FAZ 9 sonrasında 24 test dosyasındaki 120 testin tamamı geçti. Typecheck ve production build başarılı; beş kritik sözleşme senaryosu migration uygulanmış PostgreSQL 17 üzerinde doğrulandı. Docker Compose tabanlı tek-komut yerel kurulum, OpenAPI/Socket.IO sözleşmeleri, coverage eşikleri ve seri GitHub Actions hattı eklendi. Mevcut seviye **“sözleşmesi belgelenmiş, gerçek veritabanıyla doğrulanmış ve tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
+FAZ 8–11 sonrasında 27 test dosyasındaki 145 testin tamamı geçti. Typecheck ve production build başarılı; mesaj yaşam döngüsü dahil kritik sözleşme senaryoları migration uygulanmış PostgreSQL 17 üzerinde doğrulandı. Docker Compose tabanlı tek-komut yerel kurulum, OpenAPI/Socket.IO sözleşmeleri, coverage eşikleri, güvenlik sertleştirmesi ve seri GitHub Actions hattı mevcuttur. Mevcut seviye **“sözleşmesi belgelenmiş, güvenlik temelleri sertleştirilmiş, gerçek veritabanıyla doğrulanmış ve tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
 
-Bir sonraki backend adımı temel güvenlik sertleştirmesini tamamlamak ve ürün önceliğine göre grup konuşmaları veya mesaj düzenleme/silme gibi şemada izi olup uygulama katmanında bulunmayan özelliklere geçmektir.
+Bir sonraki backend adımı ürün önceliğine göre grup konuşmaları, profil/hesap yönetimi veya çoklu instance güvenilirliği arasından seçilmelidir.
 
 ## 2. Teknoloji ve mimari özeti
 
@@ -70,6 +70,8 @@ Mesaj / okundu değişikliği
 | `GET /api/v1/conversations/:conversationId` | Hazır | Üyenin konuşma detayını alma |
 | `POST /api/v1/conversations/:conversationId/messages` | Hazır | Idempotent metin mesajı gönderme |
 | `GET /api/v1/conversations/:conversationId/messages` | Hazır | Cursor tabanlı mesaj geçmişi |
+| `PATCH /api/v1/conversations/:conversationId/messages/:messageId` | Hazır | Yalnızca gönderen için mesaj düzenleme |
+| `DELETE /api/v1/conversations/:conversationId/messages/:messageId` | Hazır | İdempotent soft-delete ve tombstone döndürme |
 | `PUT /api/v1/conversations/:conversationId/read` | Hazır | Geri gitmeyen okundu watermark'ı güncelleme |
 
 Korunan HTTP uçları Bearer access token ister. Refresh token JavaScript'e açılmayan `HttpOnly`, `SameSite=Lax` cookie içinde tutulur; production ortamında `Secure` kullanılır. Production refresh/logout isteklerinde `Origin`, `FRONTEND_ORIGIN` ile bire bir doğrulanır.
@@ -88,6 +90,8 @@ Sunucudan istemciye:
 
 - `session:ready`
 - `message:created`
+- `message:updated`
+- `message:deleted`
 - `read:updated`
 - `typing:updated`
 - `presence:updated`
@@ -113,15 +117,15 @@ Doğrudan konuşma anahtarı ile konuşma tekilleştirilmiş; mesajlarda `(sende
 
 | Kontrol | Sonuç |
 | --- | --- |
-| `npm test` | Başarılı — 24 dosya, 120/120 test |
+| `npm test` | Başarılı — 27 dosya, 145/145 test |
 | `npm run typecheck` | Başarılı |
 | `npm run build` | Başarılı |
-| `npm test -- --coverage` | Başarılı — statement %82,21; branch %71,50; function %82,90; line %82,58 |
+| `npm test -- --coverage` | Başarılı — statement %83,42; branch %73,28; function %84,18; line %83,77 |
 | `npm run setup:local` | Başarılı — PostgreSQL 17, `chat` + `chat_test`, migration ve seed |
 
 Not: Typecheck ve build komutlarının ikisi de `prisma generate` çalıştırıyor. Bunlar aynı çalışma dizininde paralel başlatıldığında Windows üzerinde üretilen klasöre eşzamanlı erişim nedeniyle geçici `EPERM` oluşabiliyor. Seri çalıştırıldıklarında ikisi de başarılıdır. CI hattı ya kontrolleri seri çalıştırmalı ya da Prisma Client'ı tek bir hazırlık adımında üretmelidir.
 
-Test kapsamının güçlü tarafları auth/session yarış koşulları, doğrudan konuşma tekilleştirme, mesaj idempotency, keyset pagination, monoton okundu bilgisi, yetki kontrolleri ve Socket.IO yayın davranışlarıdır. Beş kritik sözleşme senaryosu ayrıca `src/contracts/backend-contract.integration.test.ts` içinde gerçek PostgreSQL'e karşı çalışır. Vitest line, function, branch ve statement alanlarının her biri için %70 coverage eşiği uygular.
+Test kapsamının güçlü tarafları auth/session yarış koşulları, doğrudan konuşma tekilleştirme, mesaj idempotency ve yaşam döngüsü, keyset pagination, monoton okundu bilgisi, yetki kontrolleri ve Socket.IO yayın davranışlarıdır. Kritik sözleşme senaryoları ayrıca `src/contracts/backend-contract.integration.test.ts` içinde gerçek PostgreSQL'e karşı çalışır. Vitest line, function, branch ve statement alanlarının her biri için %70 coverage eşiği uygular.
 
 ## 5. Klasör yapısı
 
@@ -153,7 +157,7 @@ realtime-chat-api/
 │  ├─ modules/
 │  │  ├─ auth/                         # JWT, parola, cookie ve session yönetimi
 │  │  ├─ conversations/                # Doğrudan konuşma iş kuralları
-│  │  ├─ messages/                     # Mesaj oluşturma ve geçmiş
+│  │  ├─ messages/                     # Mesaj oluşturma, düzenleme, soft-delete ve geçmiş
 │  │  ├─ reads/                        # Okundu watermark'ı
 │  │  └─ users/                        # Kullanıcı arama
 │  ├─ realtime/
@@ -184,7 +188,7 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 ### Ürün kapsamı
 
 - Veri modeli `GROUP` konuşmayı destekleyecek şekilde hazırlanmış olsa da servis yalnızca `DIRECT` kabul ediyor; grup oluşturma, üye/rol yönetimi ve grup olayları yok.
-- Mesaj modelinde `editedAt` ve `deletedAt` bulunuyor fakat mesaj düzenleme/silme uçları ve Socket olayları yok.
+- Mesaj düzenleme ve soft-delete yalnızca doğrudan konuşmalarda ve gönderen yetkisiyle desteklenir; grup/moderatör silmesi kapsam dışıdır.
 - Kullanıcı profilini güncelleme, avatar yükleme, parola sıfırlama/değiştirme, e-posta doğrulama ve “tüm cihazlardan çıkış” akışları yok.
 - Dosya/görsel eki, mesaj arama, bildirim, engelleme/raporlama ve moderasyon kapsam dışında.
 
@@ -225,7 +229,7 @@ P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritaba
 ### P1 — MVP ürün kapsamını tamamlama
 
 1. Grup konuşması oluşturma, başlık değiştirme, üye ekleme/çıkarma ve rol/yetki kurallarını uygula.
-2. Mesaj düzenleme ve soft-delete endpoint'leri ile `message:updated` / `message:deleted` event'lerini ekle.
+2. **Tamamlandı — Mesaj yaşam döngüsü.** Gönderen için düzenleme, idempotent soft-delete, tombstone gösterimi ve `message:updated` / `message:deleted` event'leri eklendi.
 3. Profil güncelleme ve avatar akışını ekle; dosya depolama kararı verilirse imzalı yükleme URL'lerini tercih et.
 4. Parola değiştirme/sıfırlama, e-posta doğrulama, aktif oturumları listeleme ve tüm cihazlardan çıkış akışlarını ekle.
 5. Backend sözleşme testlerinde reconnect sonrası yeniden abonelik, token refresh, idempotent retry, cursor pagination ve typing timeout davranışlarını doğrula; frontend geliştiricisine örnek istek/event akışlarını sağla. Frontend uygulama kodu bu backend planının kapsamı dışındadır.
@@ -257,7 +261,7 @@ P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritaba
 4. ~~OpenAPI başlangıç belgesi ve Socket.IO event dokümanı~~
 5. ~~Rate limiting ve güvenlik header'ları~~
 
-Bu sprintin sonunda mevcut MVP'nin “benim makinemde çalışıyor” seviyesinden tekrarlanabilir, sözleşmesi bilinen ve güvenle genişletilebilir bir backend tabanına taşınması hedeflenmelidir. Bundan sonraki sprintte grup konuşmaları ile mesaj düzenleme/silme birlikte ele alınabilir.
+Bu sprint sonunda mevcut MVP, “benim makinemde çalışıyor” seviyesinden tekrarlanabilir, sözleşmesi bilinen ve güvenle genişletilebilir bir backend tabanına taşındı. Sonraki sprint için grup konuşmaları, profil/hesap yönetimi veya çoklu instance altyapısından biri bağımsız kapsam olarak seçilmelidir.
 
 ## 9. Karar verilmesi gereken konular
 
@@ -267,7 +271,7 @@ Geliştirmeye başlamadan önce aşağıdaki ürün/altyapı kararları netleşt
 - Tek instance ile başlanacaksa beklenen eşzamanlı socket ve mesaj hacmi nedir; çoklu instance hangi eşikte zorunlu olacak?
 - Frontend ve API aynı site altındaki farklı subdomain'lerde mi kalacak? Bu karar cookie/CSRF tasarımını etkiler.
 - Medya ekleri ilk sürüme dahil mi; dahilse hangi object storage ve virüs tarama akışı kullanılacak?
-- Mesaj düzenleme/silme davranışı ve saklama politikası nedir?
+- Soft-delete edilen mesajların DB body’si için production saklama/anonymization süresi ne olmalıdır?
 - Production hedefi nedir: tek sunucu, container platformu veya yönetilen bir servis mi?
 
 Bu kararlar P1 kapsamını ve P2 ölçekleme işlerinin ne kadar erken yapılması gerektiğini doğrudan belirler.

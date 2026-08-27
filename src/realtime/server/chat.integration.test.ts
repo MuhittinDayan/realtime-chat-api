@@ -18,8 +18,11 @@ import type {
   CreateMessageRepositoryInput,
   CreateMessageRepositoryResult,
   ListMessagesRepositoryInput,
+  MessageMutationRepositoryResult,
   MessageRecord,
   MessageRepository,
+  SoftDeleteMessageRepositoryInput,
+  UpdateMessageRepositoryInput,
 } from "../../modules/messages/message.repository.js";
 import { createMessageRouter } from "../../modules/messages/message.routes.js";
 import {
@@ -161,7 +164,7 @@ class InMemoryMessageRepository implements MessageRepository {
       return { message: this.message, created: false };
     }
 
-    this.message = {
+    const created: MessageRecord = {
       id: MESSAGE_ID,
       conversationId: input.conversationId,
       senderId: input.senderId,
@@ -170,14 +173,58 @@ class InMemoryMessageRepository implements MessageRepository {
       body: input.body,
       createdAt: NOW,
       editedAt: null,
+      deletedAt: null,
     };
-    return { message: this.message, created: true };
+    this.message = created;
+    return { message: created, created: true };
   }
 
   async listMessages(
     _input: ListMessagesRepositoryInput,
   ): Promise<readonly MessageRecord[]> {
     return this.message === null ? [] : [this.message];
+  }
+
+  async updateMessage(
+    input: UpdateMessageRepositoryInput,
+  ): Promise<MessageMutationRepositoryResult> {
+    if (
+      this.message === null ||
+      this.message.id !== input.messageId ||
+      this.message.conversationId !== input.conversationId ||
+      this.message.senderId !== input.senderId ||
+      this.message.deletedAt !== null
+    ) {
+      return { message: null, changed: false };
+    }
+
+    if (this.message.body === input.body) {
+      return { message: this.message, changed: false };
+    }
+
+    this.message.body = input.body;
+    this.message.editedAt = input.editedAt;
+    return { message: this.message, changed: true };
+  }
+
+  async softDeleteMessage(
+    input: SoftDeleteMessageRepositoryInput,
+  ): Promise<MessageMutationRepositoryResult> {
+    if (
+      this.message === null ||
+      this.message.id !== input.messageId ||
+      this.message.conversationId !== input.conversationId ||
+      this.message.senderId !== input.senderId
+    ) {
+      return { message: null, changed: false };
+    }
+
+    if (this.message.deletedAt !== null) {
+      return { message: this.message, changed: false };
+    }
+
+    this.message.deletedAt = input.deletedAt;
+    return { message: this.message, changed: true };
   }
 }
 
@@ -205,6 +252,7 @@ async function createHarness(
     new InMemoryMessageRepository(),
     access,
     publisher,
+    fixedClock,
   );
   const apiRouter = Router();
   apiRouter.use(createAuthenticationMiddleware(authenticator));

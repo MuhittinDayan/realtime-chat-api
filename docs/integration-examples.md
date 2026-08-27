@@ -1,6 +1,6 @@
 # Backend Entegrasyon Örnekleri ve Davranış Sözleşmeleri
 
-Bu belge frontend geliştiricisinin mevcut backend ile entegrasyonunda kritik olan beş akışı, gerçek payload ve gözlenen backend davranışıyla açıklar. Buradaki davranışlar üretim kodu ve testlerle doğrulanmıştır; frontend özelliği tanımlamaz.
+Bu belge frontend geliştiricisinin mevcut backend ile entegrasyonunda kritik akışları, gerçek payload ve gözlenen backend davranışıyla açıklar. Buradaki davranışlar üretim kodu ve testlerle doğrulanmıştır; frontend kodu içermez.
 
 Örneklerde kullanılan kimlikler:
 
@@ -14,13 +14,14 @@ Client msg:   55555555-5555-4555-8555-555555555555
 
 ## Test kapsamı
 
-Beş senaryonun tamamı migration uygulanmış gerçek PostgreSQL üzerinde `src/contracts/backend-contract.integration.test.ts` dosyasında doğrulanır.
+Senaryolar migration uygulanmış gerçek PostgreSQL üzerinde `src/contracts/backend-contract.integration.test.ts` dosyasında doğrulanır.
 
 | Senaryo | DB-backed sözleşme testi | Ek mevcut testler |
 | --- | --- | --- |
 | Reconnect ve yeniden abonelik | `requires a new conversation subscription after reconnect` | `src/realtime/server/chat.integration.test.ts` — subscribe/unsubscribe ve abone olmayan typing |
 | Token expiry, refresh ve socket etkisi | `keeps an established socket connected after access-token expiry and accepts a refreshed token on a new handshake` | `src/modules/auth/tokens/access-token.service.test.ts`, `src/modules/auth/auth.routes.integration.test.ts` |
 | Mesaj idempotent retry | `returns the original message with 200 and emits no second event for an idempotent retry` | `src/modules/messages/message.service.test.ts`, `src/modules/messages/message.repository.test.ts` |
+| Mesaj düzenleme ve soft-delete | `edits and soft-deletes only for the sender while preserving a masked tombstone` | `src/modules/messages/message.service.test.ts`, `src/modules/messages/message.routes.integration.test.ts`, `src/modules/messages/message.repository.test.ts` |
 | Cursor uç durumları | `returns null cursors for empty and final pages and a base64url JSON cursor between pages` | `src/modules/messages/message.service.test.ts`, `src/modules/conversations/conversation.service.test.ts`, `src/modules/users/users.service.test.ts` |
 | Typing expiry | `does not emit typing false automatically when the five-second expiry passes` | `src/realtime/server/chat.integration.test.ts` |
 
@@ -212,7 +213,8 @@ Mesaj tekillik anahtarı `(senderId, clientMessageId)` çiftidir. `conversationI
      "kind": "TEXT",
      "body": "Merhaba",
      "createdAt": "2030-01-01T00:00:00.000Z",
-     "editedAt": null
+    "editedAt": null,
+    "deletedAt": null
    }
    ```
 
@@ -225,6 +227,82 @@ Mesaj tekillik anahtarı `(senderId, clientMessageId)` çiftidir. `conversationI
    ```
 
    Gövde ilk mesajın aynı `id`, `body` ve zaman değerlerini taşır. Retry payload'ında aynı idempotency anahtarıyla farklı text gönderilse bile repository var olan mesajı döndürür; `clientMessageId` farklı bir mantıksal mesaj için yeniden kullanılmamalıdır. Kaynak: `src/modules/messages/message.repository.ts`.
+
+Silinmiş mesaj için aynı `clientMessageId` ile create retry yapılırsa mesaj yeniden oluşturulmaz veya diriltilmez. `200` ile mevcut tombstone (`body: null`, dolu `deletedAt`) döner ve `message:created` yayınlanmaz. Kaynaklar: `src/modules/messages/message.service.ts`, `src/modules/messages/message.repository.ts`; DB-backed test: `src/contracts/backend-contract.integration.test.ts`.
+
+## C2. Mesaj düzenleme ve soft-delete
+
+### Kesin davranış
+
+- Yalnızca mesajı gönderen kullanıcı düzenleyebilir veya silebilir; süre sınırı yoktur.
+- Aktif conversation üyesi olmayan kullanıcı `404 CONVERSATION_NOT_FOUND`; üye olup gönderen olmayan kullanıcı `404 MESSAGE_NOT_FOUND` alır. Böylece mutation cevabı varlık/yetki ayrıntısı sızdırmaz.
+- Düzenleme body’si create ile aynı şekilde trim edilir ve 1–4000 karakter olmalıdır. Normalize edilmiş içerik aynıysa `200` no-op döner; `editedAt` ve socket event'i değişmez.
+- Soft-delete fiziksel satırı ve DB body’sini korur. HTTP/history/socket DTO’sunda `body: null`, `deletedAt: <ISO timestamp>` görünür.
+- Silinen mesaj history ve cursor sırasında kalır. Conversation sırası, `lastMessageAt`, read watermark ve unread sırası geriye gitmez.
+- Conversation listesindeki silinmiş `lastMessage` de listede kalır; `body: null` ve dolu `deletedAt` döner.
+- Tekrarlanan silme `200` ile aynı tombstone'u döndürür; `deletedAt` değişmez ve ikinci `message:deleted` yayınlanmaz.
+
+Kaynaklar: `prisma/schema.prisma`, `src/modules/messages/message.schema.ts`, `src/modules/messages/message.repository.ts`, `src/modules/messages/message.service.ts`, `src/modules/messages/message.errors.ts`, `src/modules/conversations/conversation.repository.ts`; DB-backed test: `src/contracts/backend-contract.integration.test.ts`.
+
+### Düzenleme akışı
+
+```http
+PATCH /api/v1/conversations/33333333-3333-4333-8333-333333333333/messages/44444444-4444-4444-8444-444444444444
+Authorization: Bearer <access-token>
+Content-Type: application/json
+```
+
+```json
+{
+  "content": {
+    "type": "text",
+    "text": "Düzenlenmiş mesaj"
+  }
+}
+```
+
+Başarılı cevap `200 OK`:
+
+```json
+{
+  "id": "44444444-4444-4444-8444-444444444444",
+  "conversationId": "33333333-3333-4333-8333-333333333333",
+  "senderId": "11111111-1111-4111-8111-111111111111",
+  "clientMessageId": "55555555-5555-4555-8555-555555555555",
+  "kind": "TEXT",
+  "body": "Düzenlenmiş mesaj",
+  "createdAt": "2030-01-01T00:00:00.000Z",
+  "editedAt": "2030-01-01T00:03:00.000Z",
+  "deletedAt": null
+}
+```
+
+İçerik gerçekten değiştiyse commit sonrasında odadaki gönderen dahil tüm socket'ler aynı Message nesnesini `{ "message": ... }` zarfında `message:updated` ile alır. Frontend mesajı `id` üzerinden yerinde güncellemelidir. Kaynaklar: `src/realtime/messages/message-publisher.ts`, `src/realtime/server/chat-events.ts`.
+
+### Silme akışı
+
+```http
+DELETE /api/v1/conversations/33333333-3333-4333-8333-333333333333/messages/44444444-4444-4444-8444-444444444444
+Authorization: Bearer <access-token>
+```
+
+Başarılı ve tekrarlanan idempotent cevap `200 OK`:
+
+```json
+{
+  "id": "44444444-4444-4444-8444-444444444444",
+  "conversationId": "33333333-3333-4333-8333-333333333333",
+  "senderId": "11111111-1111-4111-8111-111111111111",
+  "clientMessageId": "55555555-5555-4555-8555-555555555555",
+  "kind": "TEXT",
+  "body": null,
+  "createdAt": "2030-01-01T00:00:00.000Z",
+  "editedAt": "2030-01-01T00:03:00.000Z",
+  "deletedAt": "2030-01-01T00:05:00.000Z"
+}
+```
+
+İlk silmede aynı tombstone `{ "message": ... }` zarfıyla `message:deleted` olarak gelir. Frontend mesajı diziden çıkarmamalı; içeriği yerel bir “silindi” sunumuyla değiştirmeli ve cursor'ı yeniden üretmemelidir. Kaynaklar: `src/modules/messages/message.service.ts`, `src/realtime/messages/message-publisher.ts`, `src/contracts/backend-contract.integration.test.ts`.
 
 ## D. Cursor pagination uç durumları
 
@@ -264,7 +342,8 @@ Cursor `Buffer.from(JSON.stringify(payload)).toString("base64url")` ile üretili
          "kind": "TEXT",
          "body": "Önceki mesaj",
          "createdAt": "2029-12-31T23:59:59.000Z",
-         "editedAt": null
+         "editedAt": null,
+         "deletedAt": null
        },
        {
          "id": "44444444-4444-4444-8444-444444444444",
@@ -274,7 +353,8 @@ Cursor `Buffer.from(JSON.stringify(payload)).toString("base64url")` ile üretili
          "kind": "TEXT",
          "body": "Son mesaj",
          "createdAt": "2030-01-01T00:00:00.000Z",
-         "editedAt": null
+         "editedAt": null,
+         "deletedAt": null
        }
      ],
     "nextCursor": "eyJ2IjoxLCJjcmVhdGVkQXQiOiIyMDI5LTEyLTMxVDIzOjU5OjU5LjAwMFoiLCJpZCI6IjQ0NDQ0NDQ0LTQ0NDQtNDQ0NC04NDQ0LTQ0NDQ0NDQ0NDQ0MyJ9"
@@ -302,7 +382,8 @@ Cursor `Buffer.from(JSON.stringify(payload)).toString("base64url")` ile üretili
          "kind": "TEXT",
          "body": "İlk mesaj",
          "createdAt": "2029-12-31T23:59:58.000Z",
-         "editedAt": null
+         "editedAt": null,
+         "deletedAt": null
        }
      ],
      "nextCursor": null

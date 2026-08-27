@@ -206,6 +206,7 @@ Yeni mesaj DB transaction'ı commit edildikten sonra `conversation:<conversation
     body: string;
     createdAt: string;      // ISO 8601
     editedAt: string | null; // ISO 8601 veya null
+    deletedAt: null;
   };
 }
 ```
@@ -222,12 +223,59 @@ Yeni mesaj DB transaction'ı commit edildikten sonra `conversation:<conversation
     "kind": "TEXT",
     "body": "Merhaba",
     "createdAt": "2030-01-01T00:00:00.000Z",
-    "editedAt": null
+    "editedAt": null,
+    "deletedAt": null
   }
 }
 ```
 
 Kaynaklar: `src/modules/messages/message.service.ts`, `src/realtime/messages/message-publisher.ts`, `src/realtime/server/chat-events.ts`; testler: `src/realtime/server/chat.integration.test.ts`, `src/contracts/backend-contract.integration.test.ts`.
+
+### `message:updated`
+
+Gönderenin HTTP düzenleme isteği mesajı gerçekten değiştirdiyse, DB transaction'ı tamamlandıktan sonra `conversation:<conversationId>` odasındaki tüm aktif socket'lere yayınlanır. Gönderenin aynı odaya abone socket'leri de event'i alır. Normalize edilmiş içerik mevcut body ile aynıysa HTTP `200` döner fakat event yayınlanmaz. Yetkisiz, bulunamayan veya silinmiş mesaja yönelik başarısız işlem de event üretmez. Server→Client event'i olduğu için ack yoktur.
+
+Payload mevcut `message:created` ile aynı `{ message }` zarfını kullanır:
+
+```json
+{
+  "message": {
+    "id": "44444444-4444-4444-8444-444444444444",
+    "conversationId": "33333333-3333-4333-8333-333333333333",
+    "senderId": "11111111-1111-4111-8111-111111111111",
+    "clientMessageId": "55555555-5555-4555-8555-555555555555",
+    "kind": "TEXT",
+    "body": "Düzenlenmiş mesaj",
+    "createdAt": "2030-01-01T00:00:00.000Z",
+    "editedAt": "2030-01-01T00:03:00.000Z",
+    "deletedAt": null
+  }
+}
+```
+
+Kaynaklar: `src/modules/messages/message.service.ts`, `src/modules/messages/message.repository.ts`, `src/realtime/messages/message-publisher.ts`, `src/realtime/server/chat-events.ts`; DB-backed test: `src/contracts/backend-contract.integration.test.ts`.
+
+### `message:deleted`
+
+Gönderenin ilk başarılı soft-delete işlemi DB'ye commit edildikten sonra `conversation:<conversationId>` odasındaki tüm aktif socket'lere, gönderen dahil, yayınlanır. DB'deki body korunmasına rağmen event payload'ında `body` daima `null` olur. `editedAt` önceki değerini korur ve `deletedAt` sunucunun silme zamanıdır. Tekrarlanan idempotent silme aynı HTTP tombstone'unu döndürür fakat ikinci event üretmez. Server→Client event'i olduğu için ack yoktur.
+
+```json
+{
+  "message": {
+    "id": "44444444-4444-4444-8444-444444444444",
+    "conversationId": "33333333-3333-4333-8333-333333333333",
+    "senderId": "11111111-1111-4111-8111-111111111111",
+    "clientMessageId": "55555555-5555-4555-8555-555555555555",
+    "kind": "TEXT",
+    "body": null,
+    "createdAt": "2030-01-01T00:00:00.000Z",
+    "editedAt": "2030-01-01T00:03:00.000Z",
+    "deletedAt": "2030-01-01T00:05:00.000Z"
+  }
+}
+```
+
+Kaynaklar: `src/modules/messages/message.service.ts`, `src/modules/messages/message.repository.ts`, `src/realtime/messages/message-publisher.ts`, `src/realtime/server/chat-events.ts`; DB-backed test: `src/contracts/backend-contract.integration.test.ts`.
 
 ### `read:updated`
 
@@ -296,7 +344,8 @@ Kaynaklar: `src/realtime/presence/connection-registry.ts`, `src/realtime/presenc
 1. Her yeni/reconnect olmuş socket'te `session:ready` beklenmeli ve ekranda açık/gerekli konuşmalar yeniden `conversation:subscribe` ile abone edilmelidir.
 2. HTTP access token expire olduğunda refresh cookie ile `POST /api/v1/auth/refresh` çağrılmalı; yeni access token saklanmalı. Eski socket otomatik düşmediği için frontend isterse kontrollü kapatıp yeni token ile yeniden bağlanmalı ve konuşmalara yeniden abone olmalıdır.
 3. Mesaj retry'larında aynı kullanıcı için aynı `clientMessageId` korunmalıdır; `200` var olan mesaj, `201` yeni mesaj anlamına gelir. Her iki başarı gövdesi aynı Message biçimindedir.
-4. `typing:updated.expiresAt` geldiğinde yerel gösterge için timer güncellenmelidir. Yeni typing event'i gelmezse bu zamanda gösterge istemci tarafından kapatılmalıdır.
-5. Presence snapshot'ında istenen her UUID'nin bulunacağı varsayılmamalıdır; yetkisiz/ilişkisiz kullanıcılar map'ten sessizce çıkarılır.
+4. `message:updated` ve `message:deleted` geldiğinde frontend aynı mesaj kimliğini yerel listede yerinde güncellemelidir. Silinen mesaj listeden çıkarılmamalı; `body: null` tombstone olarak gösterilmelidir.
+5. `typing:updated.expiresAt` geldiğinde yerel gösterge için timer güncellenmelidir. Yeni typing event'i gelmezse bu zamanda gösterge istemci tarafından kapatılmalıdır.
+6. Presence snapshot'ında istenen her UUID'nin bulunacağı varsayılmamalıdır; yetkisiz/ilişkisiz kullanıcılar map'ten sessizce çıkarılır.
 
 Bu maddelerin kaynak doğrulaması: `src/contracts/backend-contract.integration.test.ts` ve yukarıdaki ilgili üretim dosyaları.

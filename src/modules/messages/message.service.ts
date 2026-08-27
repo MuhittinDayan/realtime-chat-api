@@ -1,5 +1,7 @@
 import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
 import { encodeCursor } from "../../shared/pagination/cursor.js";
+import { systemClock, type Clock } from "../../shared/time/clock.js";
+import { MessageNotFoundError } from "./message.errors.js";
 import type {
   MessageRecord,
   MessageRepository,
@@ -7,6 +9,7 @@ import type {
 import type {
   CreateMessageBody,
   MessageHistoryQuery,
+  UpdateMessageBody,
 } from "./message.schema.js";
 
 export interface MessageDto {
@@ -15,9 +18,10 @@ export interface MessageDto {
   senderId: string;
   clientMessageId: string;
   kind: "TEXT";
-  body: string;
+  body: string | null;
   createdAt: Date;
   editedAt: Date | null;
+  deletedAt: Date | null;
 }
 
 export interface CreateMessageResult {
@@ -36,6 +40,8 @@ export interface ConversationAccessService {
 
 export interface MessagePublisher {
   publishMessageCreated(message: MessageDto): Promise<void> | void;
+  publishMessageUpdated(message: MessageDto): Promise<void> | void;
+  publishMessageDeleted(message: MessageDto): Promise<void> | void;
 }
 
 export class MessageService {
@@ -43,6 +49,7 @@ export class MessageService {
     private readonly messageRepository: MessageRepository,
     private readonly conversationAccessService: ConversationAccessService,
     private readonly messagePublisher: MessagePublisher,
+    private readonly clock: Clock = systemClock,
   ) {}
 
   async createMessage(
@@ -87,6 +94,60 @@ export class MessageService {
     };
   }
 
+  async updateMessage(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+    input: UpdateMessageBody,
+  ): Promise<MessageDto> {
+    await this.ensureActiveMember(conversationId, userId);
+    const result = await this.messageRepository.updateMessage({
+      conversationId,
+      messageId,
+      senderId: userId,
+      body: input.content.text,
+      editedAt: this.clock.now(),
+    });
+
+    if (result.message === null) {
+      throw new MessageNotFoundError();
+    }
+
+    const message = toMessageDto(result.message);
+
+    if (result.changed) {
+      await this.messagePublisher.publishMessageUpdated(message);
+    }
+
+    return message;
+  }
+
+  async deleteMessage(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+  ): Promise<MessageDto> {
+    await this.ensureActiveMember(conversationId, userId);
+    const result = await this.messageRepository.softDeleteMessage({
+      conversationId,
+      messageId,
+      senderId: userId,
+      deletedAt: this.clock.now(),
+    });
+
+    if (result.message === null) {
+      throw new MessageNotFoundError();
+    }
+
+    const message = toMessageDto(result.message);
+
+    if (result.changed) {
+      await this.messagePublisher.publishMessageDeleted(message);
+    }
+
+    return message;
+  }
+
   private async ensureActiveMember(
     conversationId: string,
     userId: string,
@@ -113,9 +174,10 @@ function toMessageDto(message: MessageRecord): MessageDto {
     senderId: message.senderId,
     clientMessageId: message.clientMessageId,
     kind: message.kind,
-    body: message.body,
+    body: message.deletedAt === null ? message.body : null,
     createdAt: message.createdAt,
     editedAt: message.editedAt,
+    deletedAt: message.deletedAt,
   };
 }
 

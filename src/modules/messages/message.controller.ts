@@ -4,10 +4,13 @@ import type { ValidatedRequestHandler } from "../../http/validation/request-vali
 import { requireAuthContext } from "../auth/auth.middleware.js";
 import type {
   CreateMessageBody,
+  MessageParams,
   MessageHistoryQuery,
+  UpdateMessageBody,
 } from "./message.schema.js";
 import type {
   CreateMessageResult,
+  MessageDto,
   MessageHistoryResult,
 } from "./message.service.js";
 
@@ -22,6 +25,17 @@ export interface MessageHttpService {
     conversationId: string,
     input: MessageHistoryQuery,
   ): Promise<MessageHistoryResult>;
+  updateMessage(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+    input: UpdateMessageBody,
+  ): Promise<MessageDto>;
+  deleteMessage(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+  ): Promise<MessageDto>;
 }
 
 export class MessageController {
@@ -54,6 +68,35 @@ export class MessageController {
 
     response.status(200).json(result);
   };
+
+  readonly update: ValidatedRequestHandler<UpdateMessageBody> = async (
+    request,
+    response,
+    input,
+  ): Promise<void> => {
+    const message = await this.messageService.updateMessage(
+      requireAuthContext(request).userId,
+      readConversationId(request),
+      readMessageId(request),
+      input,
+    );
+
+    response.status(200).json(message);
+  };
+
+  readonly delete: ValidatedRequestHandler<MessageParams> = async (
+    request,
+    response,
+    input,
+  ): Promise<void> => {
+    const message = await this.messageService.deleteMessage(
+      requireAuthContext(request).userId,
+      input.conversationId,
+      input.messageId,
+    );
+
+    response.status(200).json(message);
+  };
 }
 
 function readConversationId(request: Request): string {
@@ -64,4 +107,14 @@ function readConversationId(request: Request): string {
   }
 
   return conversationId;
+}
+
+function readMessageId(request: Request): string {
+  const messageId = request.params.messageId;
+
+  if (typeof messageId !== "string") {
+    throw new Error("Message route parameter is missing");
+  }
+
+  return messageId;
 }

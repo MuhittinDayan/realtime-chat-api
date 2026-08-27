@@ -154,6 +154,7 @@ describe("Prisma conversation repository", () => {
         lastMessageBody: "latest message",
         lastMessageSenderId: BOB_ID,
         lastMessageCreatedAt: NOW,
+        lastMessageDeletedAt: null,
         unreadCount: 2,
       },
       {
@@ -162,6 +163,7 @@ describe("Prisma conversation repository", () => {
         lastMessageBody: null,
         lastMessageSenderId: null,
         lastMessageCreatedAt: null,
+        lastMessageDeletedAt: null,
         unreadCount: 0,
       },
     ]);
@@ -182,6 +184,7 @@ describe("Prisma conversation repository", () => {
       body: "latest message",
       senderId: BOB_ID,
       createdAt: NOW,
+      deletedAt: null,
     });
     expect(conversations[0]?.unreadCount).toBe(2);
     expect(conversations[1]?.lastMessage).toBeNull();

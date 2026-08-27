@@ -19,6 +19,7 @@ const message = {
   body: "hello",
   createdAt: NOW,
   editedAt: null,
+  deletedAt: null,
 };
 
 describe("Prisma message repository", () => {
@@ -133,5 +134,74 @@ describe("Prisma message repository", () => {
       { createdAt: "desc" },
       { id: "desc" },
     ]);
+  });
+
+  it("updates only an undeleted message owned by the sender", async () => {
+    const updated = { ...message, body: "updated", editedAt: NOW };
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const findFirst = vi.fn().mockResolvedValue(updated);
+    const transactionClient = { message: { updateMany, findFirst } };
+    const client = {
+      $transaction: vi.fn(
+        async (callback: (transaction: typeof transactionClient) => unknown) =>
+          callback(transactionClient),
+      ),
+    } as unknown as PrismaClient;
+    const repository = new PrismaMessageRepository(client);
+
+    const result = await repository.updateMessage({
+      conversationId: CONVERSATION_ID,
+      messageId: message.id,
+      senderId: ALICE_ID,
+      body: "updated",
+      editedAt: NOW,
+    });
+
+    expect(result).toEqual({ message: updated, changed: true });
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: message.id,
+          conversationId: CONVERSATION_ID,
+          senderId: ALICE_ID,
+          deletedAt: null,
+          body: { not: "updated" },
+        },
+        data: { body: "updated", editedAt: NOW },
+      }),
+    );
+  });
+
+  it("returns the existing tombstone without changing its deletion timestamp", async () => {
+    const deleted = { ...message, deletedAt: NOW };
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const findFirst = vi.fn().mockResolvedValue(deleted);
+    const transactionClient = { message: { updateMany, findFirst } };
+    const client = {
+      $transaction: vi.fn(
+        async (callback: (transaction: typeof transactionClient) => unknown) =>
+          callback(transactionClient),
+      ),
+    } as unknown as PrismaClient;
+    const repository = new PrismaMessageRepository(client);
+
+    const result = await repository.softDeleteMessage({
+      conversationId: CONVERSATION_ID,
+      messageId: message.id,
+      senderId: ALICE_ID,
+      deletedAt: new Date(NOW.getTime() + 1_000),
+    });
+
+    expect(result).toEqual({ message: deleted, changed: false });
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: message.id,
+          conversationId: CONVERSATION_ID,
+          senderId: ALICE_ID,
+          deletedAt: null,
+        },
+      }),
+    );
   });
 });

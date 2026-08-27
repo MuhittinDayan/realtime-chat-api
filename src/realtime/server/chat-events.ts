@@ -1,9 +1,10 @@
 import type { MessageDto } from "../../modules/messages/message.service.js";
 
 export interface MessageEventDto
-  extends Omit<MessageDto, "createdAt" | "editedAt"> {
+  extends Omit<MessageDto, "createdAt" | "editedAt" | "deletedAt"> {
   createdAt: string;
   editedAt: string | null;
+  deletedAt: string | null;
 }
 
 export interface ConversationEventPayload {
@@ -53,6 +54,8 @@ export interface ChatServerToClientEvents {
     serverTime: string;
   }) => void;
   "message:created": (payload: { message: MessageEventDto }) => void;
+  "message:updated": (payload: { message: MessageEventDto }) => void;
+  "message:deleted": (payload: { message: MessageEventDto }) => void;
   "read:updated": (payload: {
     conversationId: string;
     readerId: string;

@@ -15,6 +15,7 @@ export interface MessageRecord {
   body: string;
   createdAt: Date;
   editedAt: Date | null;
+  deletedAt: Date | null;
 }
 
 export interface CreateMessageRepositoryInput {
@@ -35,6 +36,26 @@ export interface ListMessagesRepositoryInput {
   take: number;
 }
 
+export interface UpdateMessageRepositoryInput {
+  conversationId: string;
+  messageId: string;
+  senderId: string;
+  body: string;
+  editedAt: Date;
+}
+
+export interface SoftDeleteMessageRepositoryInput {
+  conversationId: string;
+  messageId: string;
+  senderId: string;
+  deletedAt: Date;
+}
+
+export interface MessageMutationRepositoryResult {
+  message: MessageRecord | null;
+  changed: boolean;
+}
+
 export interface MessageRepository {
   createMessage(
     input: CreateMessageRepositoryInput,
@@ -42,6 +63,12 @@ export interface MessageRepository {
   listMessages(
     input: ListMessagesRepositoryInput,
   ): Promise<readonly MessageRecord[]>;
+  updateMessage(
+    input: UpdateMessageRepositoryInput,
+  ): Promise<MessageMutationRepositoryResult>;
+  softDeleteMessage(
+    input: SoftDeleteMessageRepositoryInput,
+  ): Promise<MessageMutationRepositoryResult>;
 }
 
 const messageSelect = {
@@ -53,6 +80,7 @@ const messageSelect = {
   body: true,
   createdAt: true,
   editedAt: true,
+  deletedAt: true,
 } as const;
 
 function isMessageIdempotencyConflict(error: unknown): boolean {
@@ -155,6 +183,63 @@ export class PrismaMessageRepository implements MessageRepository {
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: input.take,
       select: messageSelect,
+    });
+  }
+
+  async updateMessage(
+    input: UpdateMessageRepositoryInput,
+  ): Promise<MessageMutationRepositoryResult> {
+    return this.client.$transaction(async (transaction) => {
+      const mutation = await transaction.message.updateMany({
+        where: {
+          id: input.messageId,
+          conversationId: input.conversationId,
+          senderId: input.senderId,
+          deletedAt: null,
+          body: { not: input.body },
+        },
+        data: {
+          body: input.body,
+          editedAt: input.editedAt,
+        },
+      });
+      const message = await transaction.message.findFirst({
+        where: {
+          id: input.messageId,
+          conversationId: input.conversationId,
+          senderId: input.senderId,
+          deletedAt: null,
+        },
+        select: messageSelect,
+      });
+
+      return { message, changed: mutation.count > 0 };
+    });
+  }
+
+  async softDeleteMessage(
+    input: SoftDeleteMessageRepositoryInput,
+  ): Promise<MessageMutationRepositoryResult> {
+    return this.client.$transaction(async (transaction) => {
+      const mutation = await transaction.message.updateMany({
+        where: {
+          id: input.messageId,
+          conversationId: input.conversationId,
+          senderId: input.senderId,
+          deletedAt: null,
+        },
+        data: { deletedAt: input.deletedAt },
+      });
+      const message = await transaction.message.findFirst({
+        where: {
+          id: input.messageId,
+          conversationId: input.conversationId,
+          senderId: input.senderId,
+        },
+        select: messageSelect,
+      });
+
+      return { message, changed: mutation.count > 0 };
     });
   }
 
