@@ -52,6 +52,24 @@ export const createMessageBodySchema = z
   })
   .strict();
 
+export const updateMessageBodySchema = z
+  .object({
+    content: z
+      .object({
+        type: z.literal("text"),
+        text: z.string().trim().min(1).max(4_000),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const messageParamsSchema = z
+  .object({
+    conversationId: z.string().uuid(),
+    messageId: z.string().uuid(),
+  })
+  .strict();
+
 export const messageHistoryQuerySchema = z
   .object({
     before: historyCursorSchema.optional(),
@@ -60,4 +78,6 @@ export const messageHistoryQuerySchema = z
   .strict();
 
 export type CreateMessageBody = z.infer<typeof createMessageBodySchema>;
+export type UpdateMessageBody = z.infer<typeof updateMessageBodySchema>;
+export type MessageParams = z.infer<typeof messageParamsSchema>;
 export type MessageHistoryQuery = z.infer<typeof messageHistoryQuerySchema>;

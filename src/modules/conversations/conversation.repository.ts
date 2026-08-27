@@ -24,9 +24,10 @@ export interface DirectConversationRecord {
 
 export interface ConversationLastMessageRecord {
   id: string;
-  body: string;
+  body: string | null;
   senderId: string;
   createdAt: Date;
+  deletedAt: Date | null;
 }
 
 export interface ListedDirectConversationRecord
@@ -146,6 +147,7 @@ interface RawConversationSummaryRow {
   lastMessageBody: string | null;
   lastMessageSenderId: string | null;
   lastMessageCreatedAt: Date | null;
+  lastMessageDeletedAt: Date | null;
   unreadCount: number | bigint;
 }
 
@@ -261,15 +263,18 @@ export class PrismaConversationRepository implements ConversationRepository {
         lastMessage:
           summary?.lastMessageId === null ||
           summary?.lastMessageId === undefined ||
-          summary.lastMessageBody === null ||
           summary.lastMessageSenderId === null ||
           summary.lastMessageCreatedAt === null
             ? null
             : {
                 id: summary.lastMessageId,
-                body: summary.lastMessageBody,
+                body:
+                  summary.lastMessageDeletedAt === null
+                    ? summary.lastMessageBody
+                    : null,
                 senderId: summary.lastMessageSenderId,
                 createdAt: summary.lastMessageCreatedAt,
+                deletedAt: summary.lastMessageDeletedAt,
               },
         unreadCount: Number(summary?.unreadCount ?? 0),
       };
@@ -301,6 +306,7 @@ export class PrismaConversationRepository implements ConversationRepository {
         last_message.body AS "lastMessageBody",
         last_message.sender_id AS "lastMessageSenderId",
         last_message.created_at AS "lastMessageCreatedAt",
+        last_message.deleted_at AS "lastMessageDeletedAt",
         COALESCE(unread.unread_count, 0)::integer AS "unreadCount"
       FROM conversations AS conversation
       LEFT JOIN message_reads AS watermark
@@ -309,7 +315,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       LEFT JOIN messages AS watermark_message
         ON watermark_message.id = watermark.last_read_message_id
       LEFT JOIN LATERAL (
-        SELECT id, body, sender_id, created_at
+        SELECT id, body, sender_id, created_at, deleted_at
         FROM messages
         WHERE conversation_id = conversation.id
         ORDER BY created_at DESC, id DESC

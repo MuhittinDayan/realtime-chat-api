@@ -32,6 +32,18 @@ export class SocketMessagePublisher implements MessagePublisher {
       ?.to(conversationRoom(message.conversationId))
       .emit("message:created", { message: toMessageEventDto(message) });
   }
+
+  publishMessageUpdated(message: MessageDto): void {
+    this.namespace
+      ?.to(conversationRoom(message.conversationId))
+      .emit("message:updated", { message: toMessageEventDto(message) });
+  }
+
+  publishMessageDeleted(message: MessageDto): void {
+    this.namespace
+      ?.to(conversationRoom(message.conversationId))
+      .emit("message:deleted", { message: toMessageEventDto(message) });
+  }
 }
 
 function toMessageEventDto(message: MessageDto): MessageEventDto {
@@ -39,6 +51,7 @@ function toMessageEventDto(message: MessageDto): MessageEventDto {
     ...message,
     createdAt: message.createdAt.toISOString(),
     editedAt: message.editedAt?.toISOString() ?? null,
+    deletedAt: message.deletedAt?.toISOString() ?? null,
   };
 }
 

@@ -33,9 +33,10 @@ export interface ListedDirectConversationDto
   lastMessageAt: Date | null;
   lastMessage: {
     id: string;
-    body: string;
+    body: string | null;
     senderId: string;
     createdAt: Date;
+    deletedAt: Date | null;
   } | null;
   unreadCount: number;
 }
