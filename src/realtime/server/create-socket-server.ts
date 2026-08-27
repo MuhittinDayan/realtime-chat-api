@@ -7,6 +7,7 @@ import { authService } from "../../modules/auth/auth-core.js";
 import type { AccessAuthenticator } from "../../modules/auth/auth.middleware.js";
 import { conversationService } from "../../modules/conversations/conversation-core.js";
 import type { ConversationAccessService } from "../../modules/messages/message.service.js";
+import { socketGroupPublisher, type SocketGroupPublisher } from "../groups/group-publisher.js";
 import { systemClock, type Clock } from "../../shared/time/clock.js";
 import { socketMessagePublisher, type SocketMessagePublisher } from "../messages/message-publisher.js";
 import { presenceService } from "../presence/presence-core.js";
@@ -29,6 +30,7 @@ export interface CreateSocketServerOptions {
   presencePublisher?: SocketPresencePublisher;
   messagePublisher?: SocketMessagePublisher;
   readPublisher?: SocketReadPublisher;
+  groupPublisher?: SocketGroupPublisher;
   clock?: Clock;
   typingRateLimitPolicy?: SocketEventRateLimitPolicy;
 }
@@ -47,11 +49,13 @@ export function createSocketServer(
   const chatNamespace = socketServer.of("/chat");
   const publisher = options.messagePublisher ?? socketMessagePublisher;
   const readPublisher = options.readPublisher ?? socketReadPublisher;
+  const groupPublisher = options.groupPublisher ?? socketGroupPublisher;
   const presencePublisher =
     options.presencePublisher ?? socketPresencePublisher;
 
   publisher.bind(chatNamespace);
   readPublisher.bind(chatNamespace);
+  groupPublisher.bind(chatNamespace);
   presencePublisher.bind(chatNamespace);
   configureChatNamespace(chatNamespace, {
     authenticator: options.authenticator ?? authService,

@@ -1,5 +1,25 @@
 import type { MessageDto } from "../../modules/messages/message.service.js";
 
+export interface GroupMemberEventDto {
+  userId: string;
+  role: "MEMBER" | "ADMIN" | "OWNER";
+  joinedAt: string;
+  user: {
+    id: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string | null;
+  };
+}
+
+export interface GroupConversationEventDto {
+  id: string;
+  type: "GROUP";
+  title: string;
+  createdAt: string;
+  members: readonly GroupMemberEventDto[];
+}
+
 export interface MessageEventDto
   extends Omit<MessageDto, "createdAt" | "editedAt" | "deletedAt"> {
   createdAt: string;
@@ -56,6 +76,13 @@ export interface ChatServerToClientEvents {
   "message:created": (payload: { message: MessageEventDto }) => void;
   "message:updated": (payload: { message: MessageEventDto }) => void;
   "message:deleted": (payload: { message: MessageEventDto }) => void;
+  "group:created": (payload: { conversation: GroupConversationEventDto }) => void;
+  "group:updated": (payload: { conversation: GroupConversationEventDto }) => void;
+  "member:added": (payload: { conversationId: string; member: GroupMemberEventDto }) => void;
+  "member:removed": (payload: { conversationId: string; userId: string }) => void;
+  "member:left": (payload: { conversationId: string; userId: string }) => void;
+  "member:role-updated": (payload: { conversationId: string; member: GroupMemberEventDto }) => void;
+  "ownership:transferred": (payload: { conversationId: string; previousOwnerId: string; newOwnerId: string }) => void;
   "read:updated": (payload: {
     conversationId: string;
     readerId: string;

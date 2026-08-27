@@ -8,6 +8,7 @@ import {
 import {
   DirectConversationUniqueConstraintError,
   type ConversationRepository,
+  type ConversationRecord,
   type ConversationUserRecord,
   type DirectConversationRecord,
   type ListedDirectConversationRecord,
@@ -109,7 +110,12 @@ class InMemoryConversationRepository implements ConversationRepository {
       title: null,
       lastMessageAt: null,
       createdAt: NOW,
-      members: [{ user: target.publicUser }],
+      members: [{
+        userId: target.publicUser.id,
+        role: "MEMBER",
+        joinedAt: NOW,
+        user: target.publicUser,
+      }],
     };
     this.createdMemberships = [input.currentUserId, input.targetUserId];
     this.activeMembers.set(
@@ -150,6 +156,34 @@ class InMemoryConversationRepository implements ConversationRepository {
     }
 
     return null;
+  }
+
+  async createGroupConversation(): Promise<ConversationRecord | null> {
+    throw new Error("Not implemented by direct-conversation test double");
+  }
+
+  async updateGroupTitle(): Promise<never> {
+    throw new Error("Not implemented by direct-conversation test double");
+  }
+
+  async addGroupMember(): Promise<never> {
+    throw new Error("Not implemented by direct-conversation test double");
+  }
+
+  async removeGroupMember(): Promise<never> {
+    throw new Error("Not implemented by direct-conversation test double");
+  }
+
+  async leaveGroup(): Promise<never> {
+    throw new Error("Not implemented by direct-conversation test double");
+  }
+
+  async updateGroupMemberRole(): Promise<never> {
+    throw new Error("Not implemented by direct-conversation test double");
+  }
+
+  async transferGroupOwnership(): Promise<never> {
+    throw new Error("Not implemented by direct-conversation test double");
   }
 }
 
@@ -269,7 +303,10 @@ describe("conversation list and detail service", () => {
     const result = await service.listConversations(ALICE_ID, { limit: 1 });
 
     expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.otherUser).toEqual(bob.publicUser);
+    const item = result.items[0];
+    expect(item?.type).toBe("DIRECT");
+    if (item?.type !== "DIRECT") throw new Error("Expected DIRECT fixture");
+    expect(item.otherUser).toEqual(bob.publicUser);
     expect(result.nextCursor).not.toBeNull();
   });
 
@@ -302,6 +339,8 @@ describe("conversation list and detail service", () => {
     );
 
     expect(conversation.id).toBe(CONVERSATION_ID);
+    expect(conversation.type).toBe("DIRECT");
+    if (conversation.type !== "DIRECT") throw new Error("Expected DIRECT fixture");
     expect(conversation.otherUser.id).toBe(BOB_ID);
   });
 

@@ -454,6 +454,88 @@ göndermelidir. Kaynaklar:
 
 6. Bob bu kez yine beş saniyelik `expiresAt` alanı taşıyan, fakat `isTyping:false` olan anlık `typing:updated` alır. Kod her iki boolean değeri aynı event şemasıyla iletir. Kaynak: `src/realtime/server/configure-chat-namespace.ts`.
 
+## GROUP akışı: oluşturma → üye ekleme → rol → sahiplik → ayrılma
+
+Alice, Bob ve Carol ile grup oluşturur. `userIds` oluşturan Alice'i içermez:
+
+```http
+POST /api/v1/conversations/group
+Authorization: Bearer <alice-access-token>
+Content-Type: application/json
+
+{
+  "title": "Ürün ekibi",
+  "userIds": [
+    "22222222-2222-4222-8222-222222222222",
+    "66666666-6666-4666-8666-666666666666"
+  ]
+}
+```
+
+`201` cevabında Alice `OWNER`, diğer iki kullanıcı `MEMBER` olur:
+
+```json
+{
+  "id": "33333333-3333-4333-8333-333333333333",
+  "type": "GROUP",
+  "title": "Ürün ekibi",
+  "createdAt": "2030-01-01T00:00:00.000Z",
+  "members": [
+    {
+      "userId": "11111111-1111-4111-8111-111111111111",
+      "role": "OWNER",
+      "joinedAt": "2030-01-01T00:00:00.000Z",
+      "user": { "id": "11111111-1111-4111-8111-111111111111", "username": "alice", "displayName": "Alice", "avatarUrl": null }
+    }
+  ]
+}
+```
+
+Alice veya bir ADMIN yeni üyeyi ekler. Ayrılmış bir kullanıcıysa mevcut composite-PK satırının `leftAt` alanı temizlenir:
+
+```http
+POST /api/v1/conversations/33333333-3333-4333-8333-333333333333/members
+Authorization: Bearer <alice-access-token>
+Content-Type: application/json
+
+{ "userId": "77777777-7777-4777-8777-777777777777" }
+```
+
+Zaten aktif üyede veya 100 aktif üye sınırında `409 CONFLICT` döner. Grup/aktif aktör üyeliği yoksa `404 CONVERSATION_NOT_FOUND`; aktif MEMBER yönetim işlemi denerse `403 INSUFFICIENT_ROLE` döner.
+
+Yalnız OWNER, hedef MEMBER'ı ADMIN yapar:
+
+```http
+PATCH /api/v1/conversations/33333333-3333-4333-8333-333333333333/members/22222222-2222-4222-8222-222222222222
+Authorization: Bearer <alice-access-token>
+Content-Type: application/json
+
+{ "role": "ADMIN" }
+```
+
+OWNER sahipliği Bob'a devreder:
+
+```http
+PUT /api/v1/conversations/33333333-3333-4333-8333-333333333333/owner
+Authorization: Bearer <alice-access-token>
+Content-Type: application/json
+
+{ "userId": "22222222-2222-4222-8222-222222222222" }
+```
+
+`200` cevabında Bob `OWNER`, Alice otomatik `ADMIN` olur. OWNER doğrudan rol değiştirme veya çıkarma endpoint'inin hedefi olamaz; önce bu devir yapılmalıdır, aksi halde `409 CONFLICT` ve `Ownership must be transferred first` mesajı alınır.
+
+Alice daha sonra kendi üyeliğini sonlandırır:
+
+```http
+DELETE /api/v1/conversations/33333333-3333-4333-8333-333333333333/members/me
+Authorization: Bearer <alice-access-token>
+```
+
+Cevap `204` olur; Alice'in tüm socket'leri conversation odasından sunucu tarafında çıkarılır. `DELETE .../members/{userId}` üzerinde çağıranın kendi kimliğini kullanmak `400 INVALID_OPERATION` üretir ve `/members/me` yolunu işaret eder.
+
+Mesaj ve okundu endpoint'leri GROUP için değişmez. Aktif grup üyesi aynı `/messages` ve `/read` yollarını kullanır; mesaj düzenleme/soft-delete yine yalnızca mesajın göndericisine açıktır, ADMIN veya OWNER başka bir kullanıcının mesajını değiştiremez.
+
 ## Kod-esaslı önemli sonuçlar
 
 - Başarısız Socket.IO auth bir `disconnect` reason üretmez; bağlantı hiç kurulmadığı için istemci `connect_error` alır. Hata `message = "Authentication failed"`, `data.code = "INVALID_TOKEN"` biçimindedir. Kaynak: `src/realtime/auth/socket-auth.middleware.ts`.

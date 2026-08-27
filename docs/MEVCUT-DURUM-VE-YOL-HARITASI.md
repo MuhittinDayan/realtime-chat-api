@@ -1,6 +1,6 @@
 # Realtime Chat API — Mevcut Durum ve Yol Haritası
 
-> Son inceleme: 26 Ağustos 2026
+> Son inceleme: 27 Ağustos 2026
 >
 > Proje sürümü: `0.1.0`
 >
@@ -10,11 +10,11 @@
 
 ## 1. Yönetici özeti
 
-Proje, bire bir mesajlaşmaya yönelik backend MVP'sinin ana akışlarını tamamlamış durumda. Kullanıcı kaydı ve oturum yönetimi, kullanıcı arama, doğrudan konuşma oluşturma/listeleme, mesaj gönderme, düzenleme, soft-delete ve geçmişi alma, okundu bilgisini ilerletme, Socket.IO üzerinden mesaj/okundu/typing/presence yayınlama kodda mevcut. Kod tabanı modüler, TypeScript strict kuralları açık ve servis–repository ayrımı genel olarak temiz.
+Proje, bire bir ve grup mesajlaşmasına yönelik backend MVP'sinin ana akışlarını tamamlamış durumda. Kullanıcı kaydı ve oturum yönetimi, kullanıcı arama, DIRECT/GROUP konuşma yönetimi, mesaj gönderme, düzenleme, soft-delete ve geçmişi alma, okundu bilgisini ilerletme, Socket.IO üzerinden mesaj/okundu/typing/presence ve grup yaşam döngüsü yayınları kodda mevcut. Kod tabanı modüler, TypeScript strict kuralları açık ve servis–repository ayrımı genel olarak temiz.
 
-FAZ 8–11 sonrasında 27 test dosyasındaki 145 testin tamamı geçti. Typecheck ve production build başarılı; mesaj yaşam döngüsü dahil kritik sözleşme senaryoları migration uygulanmış PostgreSQL 17 üzerinde doğrulandı. Docker Compose tabanlı tek-komut yerel kurulum, OpenAPI/Socket.IO sözleşmeleri, coverage eşikleri, güvenlik sertleştirmesi ve seri GitHub Actions hattı mevcuttur. Mevcut seviye **“sözleşmesi belgelenmiş, güvenlik temelleri sertleştirilmiş, gerçek veritabanıyla doğrulanmış ve tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
+FAZ 12 sonrasında 31 test dosyasındaki 181 testin tamamı geçti. Typecheck ve production build başarılı; mesaj yaşam döngüsü ile grup transaction/reaktivasyon senaryoları migration uygulanmış PostgreSQL 17 üzerinde doğrulandı. Docker Compose tabanlı tek-komut yerel kurulum, OpenAPI/Socket.IO sözleşmeleri, development/test ortamında Swagger UI, coverage eşikleri, güvenlik sertleştirmesi ve seri GitHub Actions hattı mevcuttur. Mevcut seviye **“sözleşmesi belgelenmiş, güvenlik temelleri sertleştirilmiş, gerçek veritabanıyla doğrulanmış ve tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
 
-Bir sonraki backend adımı ürün önceliğine göre grup konuşmaları, profil/hesap yönetimi veya çoklu instance güvenilirliği arasından seçilmelidir.
+Bir sonraki backend adımı ürün önceliğine göre profil/hesap yönetimi veya çoklu instance güvenilirliği arasından seçilmelidir.
 
 ## 2. Teknoloji ve mimari özeti
 
@@ -66,8 +66,15 @@ Mesaj / okundu değişikliği
 | `GET /api/v1/auth/me` | Hazır | Giriş yapmış kullanıcıyı alma |
 | `GET /api/v1/users` | Hazır | Kullanıcı adı / görünen ad ile cursor tabanlı arama |
 | `POST /api/v1/conversations/direct` | Hazır | Tekrarlı ve yarışan isteklerde aynı doğrudan konuşmayı döndürme |
+| `POST /api/v1/conversations/group` | Hazır | En az üç üyeli grup oluşturma; oluşturanı OWNER yapma |
 | `GET /api/v1/conversations` | Hazır | Son mesaj, okunmamış sayısı ve cursor ile konuşma listesi |
 | `GET /api/v1/conversations/:conversationId` | Hazır | Üyenin konuşma detayını alma |
+| `PATCH /api/v1/conversations/:conversationId` | Hazır | OWNER/ADMIN için grup başlığını güncelleme |
+| `POST /api/v1/conversations/:conversationId/members` | Hazır | Üye ekleme veya ayrılmış üyeyi reaktive etme |
+| `DELETE /api/v1/conversations/:conversationId/members/me` | Hazır | Gruptan ayrılma |
+| `DELETE /api/v1/conversations/:conversationId/members/:userId` | Hazır | OWNER dışındaki üyeyi çıkarma |
+| `PATCH /api/v1/conversations/:conversationId/members/:userId` | Hazır | OWNER için MEMBER/ADMIN rol değişimi |
+| `PUT /api/v1/conversations/:conversationId/owner` | Hazır | Sahipliği atomik olarak devretme |
 | `POST /api/v1/conversations/:conversationId/messages` | Hazır | Idempotent metin mesajı gönderme |
 | `GET /api/v1/conversations/:conversationId/messages` | Hazır | Cursor tabanlı mesaj geçmişi |
 | `PATCH /api/v1/conversations/:conversationId/messages/:messageId` | Hazır | Yalnızca gönderen için mesaj düzenleme |
@@ -95,6 +102,10 @@ Sunucudan istemciye:
 - `read:updated`
 - `typing:updated`
 - `presence:updated`
+- `group:created` / `group:updated`
+- `member:added` / `member:removed` / `member:left`
+- `member:role-updated`
+- `ownership:transferred`
 
 Konuşma odasına girişte aktif üyelik kontrol edilir. Typing olayı yalnızca katılınmış odadan yayınlanır ve beş saniyelik son kullanma zamanı taşır. Presence görünürlüğü doğrudan konuşma eşleriyle sınırlandırılmıştır. Aynı kullanıcının bir süreç içindeki birden fazla socket bağlantısı dikkate alınır.
 
@@ -113,14 +124,14 @@ Doğrudan konuşma anahtarı ile konuşma tekilleştirilmiş; mesajlarda `(sende
 
 ## 4. Kalite doğrulama sonucu
 
-26 Ağustos 2026 tarihinde aşağıdaki kontroller çalıştırıldı:
+27 Ağustos 2026 tarihinde aşağıdaki kontroller çalıştırıldı:
 
 | Kontrol | Sonuç |
 | --- | --- |
-| `npm test` | Başarılı — 27 dosya, 145/145 test |
+| `npm test` | Başarılı — 31 dosya, 181/181 test |
 | `npm run typecheck` | Başarılı |
 | `npm run build` | Başarılı |
-| `npm test -- --coverage` | Başarılı — statement %83,42; branch %73,28; function %84,18; line %83,77 |
+| `npm test -- --coverage` | Başarılı — statement %83,41; branch %72,52; function %85,12; line %86,11 |
 | `npm run setup:local` | Başarılı — PostgreSQL 17, `chat` + `chat_test`, migration ve seed |
 
 Not: Typecheck ve build komutlarının ikisi de `prisma generate` çalıştırıyor. Bunlar aynı çalışma dizininde paralel başlatıldığında Windows üzerinde üretilen klasöre eşzamanlı erişim nedeniyle geçici `EPERM` oluşabiliyor. Seri çalıştırıldıklarında ikisi de başarılıdır. CI hattı ya kontrolleri seri çalıştırmalı ya da Prisma Client'ı tek bir hazırlık adımında üretmelidir.
@@ -187,7 +198,6 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 
 ### Ürün kapsamı
 
-- Veri modeli `GROUP` konuşmayı destekleyecek şekilde hazırlanmış olsa da servis yalnızca `DIRECT` kabul ediyor; grup oluşturma, üye/rol yönetimi ve grup olayları yok.
 - Mesaj düzenleme ve soft-delete yalnızca doğrudan konuşmalarda ve gönderen yetkisiyle desteklenir; grup/moderatör silmesi kapsam dışıdır.
 - Kullanıcı profilini güncelleme, avatar yükleme, parola sıfırlama/değiştirme, e-posta doğrulama ve “tüm cihazlardan çıkış” akışları yok.
 - Dosya/görsel eki, mesaj arama, bildirim, engelleme/raporlama ve moderasyon kapsam dışında.
@@ -228,7 +238,7 @@ P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritaba
 
 ### P1 — MVP ürün kapsamını tamamlama
 
-1. Grup konuşması oluşturma, başlık değiştirme, üye ekleme/çıkarma ve rol/yetki kurallarını uygula.
+1. **Tamamlandı — Grup konuşmaları MVP.** Oluşturma, başlık, üye yaşam döngüsü, rol matrisi, sahiplik devri, 100 aktif üye sınırı ve GROUP socket event'leri eklendi.
 2. **Tamamlandı — Mesaj yaşam döngüsü.** Gönderen için düzenleme, idempotent soft-delete, tombstone gösterimi ve `message:updated` / `message:deleted` event'leri eklendi.
 3. Profil güncelleme ve avatar akışını ekle; dosya depolama kararı verilirse imzalı yükleme URL'lerini tercih et.
 4. Parola değiştirme/sıfırlama, e-posta doğrulama, aktif oturumları listeleme ve tüm cihazlardan çıkış akışlarını ekle.
@@ -261,13 +271,13 @@ P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritaba
 4. ~~OpenAPI başlangıç belgesi ve Socket.IO event dokümanı~~
 5. ~~Rate limiting ve güvenlik header'ları~~
 
-Bu sprint sonunda mevcut MVP, “benim makinemde çalışıyor” seviyesinden tekrarlanabilir, sözleşmesi bilinen ve güvenle genişletilebilir bir backend tabanına taşındı. Sonraki sprint için grup konuşmaları, profil/hesap yönetimi veya çoklu instance altyapısından biri bağımsız kapsam olarak seçilmelidir.
+Bu sprint sonunda mevcut MVP, “benim makinemde çalışıyor” seviyesinden tekrarlanabilir, sözleşmesi bilinen ve güvenle genişletilebilir bir backend tabanına taşındı. Grup konuşmaları MVP de tamamlandı; sonraki sprint için profil/hesap yönetimi veya çoklu instance altyapısından biri bağımsız kapsam olarak seçilmelidir.
 
 ## 9. Karar verilmesi gereken konular
 
 Geliştirmeye başlamadan önce aşağıdaki ürün/altyapı kararları netleştirilmelidir:
 
-- İlk production sürümü yalnızca bire bir konuşma mı destekleyecek, yoksa grup konuşması MVP şartı mı?
+- Grup konuşmaları production kapsamına dahildir; istemci tarafında OWNER/ADMIN yönetim ekranlarının hangi sürümde açılacağı netleştirilmelidir.
 - Tek instance ile başlanacaksa beklenen eşzamanlı socket ve mesaj hacmi nedir; çoklu instance hangi eşikte zorunlu olacak?
 - Frontend ve API aynı site altındaki farklı subdomain'lerde mi kalacak? Bu karar cookie/CSRF tasarımını etkiler.
 - Medya ekleri ilk sürüme dahil mi; dahilse hangi object storage ve virüs tarama akışı kullanılacak?

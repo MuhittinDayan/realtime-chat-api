@@ -35,3 +35,29 @@ export class ConversationNotFoundError extends AppError {
     this.name = "ConversationNotFoundError";
   }
 }
+
+export class InsufficientRoleError extends AppError {
+  constructor() {
+    super({
+      statusCode: 403,
+      code: "INSUFFICIENT_ROLE",
+      message: "Your role does not permit this action",
+    });
+
+    this.name = "InsufficientRoleError";
+  }
+}
+
+export class ConversationConflictError extends AppError {
+  constructor(message: string) {
+    super({ statusCode: 409, code: "CONFLICT", message });
+    this.name = "ConversationConflictError";
+  }
+}
+
+export class InvalidConversationOperationError extends AppError {
+  constructor(message: string) {
+    super({ statusCode: 400, code: "INVALID_OPERATION", message });
+    this.name = "InvalidConversationOperationError";
+  }
+}

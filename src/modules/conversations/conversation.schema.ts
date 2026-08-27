@@ -49,6 +49,35 @@ export const createDirectConversationBodySchema = z
   .object({ userId: z.string().uuid() })
   .strict();
 
+const titleSchema = z.string().trim().min(1).max(120);
+
+export const createGroupConversationBodySchema = z
+  .object({
+    title: titleSchema,
+    userIds: z.array(z.string().uuid()).min(2).max(99),
+  })
+  .strict()
+  .refine((value) => new Set(value.userIds).size === value.userIds.length, {
+    path: ["userIds"],
+    message: "User ids must be unique",
+  });
+
+export const updateGroupTitleBodySchema = z
+  .object({ title: titleSchema })
+  .strict();
+
+export const addGroupMemberBodySchema = z
+  .object({ userId: z.string().uuid() })
+  .strict();
+
+export const updateGroupMemberRoleBodySchema = z
+  .object({ role: z.enum(["MEMBER", "ADMIN"]) })
+  .strict();
+
+export const transferGroupOwnershipBodySchema = z
+  .object({ userId: z.string().uuid() })
+  .strict();
+
 export const listConversationsQuerySchema = z
   .object({
     cursor: conversationCursorSchema.optional(),
@@ -60,8 +89,26 @@ export const conversationParamsSchema = z
   .object({ conversationId: z.string().uuid() })
   .strict();
 
+export const groupMemberParamsSchema = conversationParamsSchema.extend({
+  userId: z.string().uuid(),
+});
+
 export type CreateDirectConversationBody = z.infer<
   typeof createDirectConversationBodySchema
+>;
+export type CreateGroupConversationBody = z.infer<
+  typeof createGroupConversationBodySchema
+>;
+export type UpdateGroupTitleBody = z.infer<
+  typeof updateGroupTitleBodySchema
+>;
+export type GroupMemberParams = z.infer<typeof groupMemberParamsSchema>;
+export type AddGroupMemberBody = z.infer<typeof addGroupMemberBodySchema>;
+export type UpdateGroupMemberRoleBody = z.infer<
+  typeof updateGroupMemberRoleBodySchema
+>;
+export type TransferGroupOwnershipBody = z.infer<
+  typeof transferGroupOwnershipBodySchema
 >;
 export type ListConversationsQuery = z.infer<
   typeof listConversationsQuerySchema
