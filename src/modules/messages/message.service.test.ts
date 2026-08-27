@@ -5,9 +5,13 @@ import type {
   CreateMessageRepositoryInput,
   CreateMessageRepositoryResult,
   ListMessagesRepositoryInput,
+  MessageMutationRepositoryResult,
   MessageRecord,
   MessageRepository,
+  SoftDeleteMessageRepositoryInput,
+  UpdateMessageRepositoryInput,
 } from "./message.repository.js";
+import { MessageNotFoundError } from "./message.errors.js";
 import { messageHistoryQuerySchema } from "./message.schema.js";
 import {
   MessageService,
@@ -17,6 +21,7 @@ import {
 } from "./message.service.js";
 
 const ALICE_ID = "11111111-1111-4111-8111-111111111111";
+const BOB_ID = "55555555-5555-4555-8555-555555555555";
 const CONVERSATION_ID = "22222222-2222-4222-8222-222222222222";
 const CLIENT_MESSAGE_ID = "33333333-3333-4333-8333-333333333333";
 const NOW = new Date("2030-01-01T00:00:00.000Z");
@@ -37,6 +42,7 @@ function createRecord(
     body: `message ${index}`,
     createdAt,
     editedAt: null,
+    deletedAt: null,
   };
 }
 
@@ -102,6 +108,54 @@ class InMemoryMessageRepository implements MessageRepository {
       )
       .slice(0, input.take);
   }
+
+  async updateMessage(
+    input: UpdateMessageRepositoryInput,
+  ): Promise<MessageMutationRepositoryResult> {
+    const message = this.records.find(
+      (record) =>
+        record.id === input.messageId &&
+        record.conversationId === input.conversationId &&
+        record.senderId === input.senderId &&
+        record.deletedAt === null,
+    );
+
+    if (message === undefined) {
+      return { message: null, changed: false };
+    }
+
+    if (message.body === input.body) {
+      return { message, changed: false };
+    }
+
+    message.body = input.body;
+    message.editedAt = input.editedAt;
+    this.lifecycle.push("commit");
+    return { message, changed: true };
+  }
+
+  async softDeleteMessage(
+    input: SoftDeleteMessageRepositoryInput,
+  ): Promise<MessageMutationRepositoryResult> {
+    const message = this.records.find(
+      (record) =>
+        record.id === input.messageId &&
+        record.conversationId === input.conversationId &&
+        record.senderId === input.senderId,
+    );
+
+    if (message === undefined) {
+      return { message: null, changed: false };
+    }
+
+    if (message.deletedAt !== null) {
+      return { message, changed: false };
+    }
+
+    message.deletedAt = input.deletedAt;
+    this.lifecycle.push("commit");
+    return { message, changed: true };
+  }
 }
 
 class FakeConversationAccess implements ConversationAccessService {
@@ -114,12 +168,24 @@ class FakeConversationAccess implements ConversationAccessService {
 
 class RecordingPublisher implements MessagePublisher {
   readonly messages: MessageDto[] = [];
+  readonly updatedMessages: MessageDto[] = [];
+  readonly deletedMessages: MessageDto[] = [];
 
   constructor(private readonly lifecycle: string[] = []) {}
 
   publishMessageCreated(message: MessageDto): void {
     this.lifecycle.push("publish");
     this.messages.push(message);
+  }
+
+  publishMessageUpdated(message: MessageDto): void {
+    this.lifecycle.push("publish:update");
+    this.updatedMessages.push(message);
+  }
+
+  publishMessageDeleted(message: MessageDto): void {
+    this.lifecycle.push("publish:delete");
+    this.deletedMessages.push(message);
   }
 }
 
@@ -222,6 +288,33 @@ describe("message history service", () => {
     ]);
   });
 
+  it("keeps a deleted message in cursor order while masking its body", async () => {
+    const repository = new InMemoryMessageRepository();
+    const deleted = createRecord(2);
+    deleted.deletedAt = NOW;
+    repository.records.push(createRecord(1), deleted, createRecord(3));
+    const service = new MessageService(
+      repository,
+      new FakeConversationAccess(true),
+      new RecordingPublisher(),
+    );
+
+    const page = await service.listMessages(ALICE_ID, CONVERSATION_ID, {
+      limit: 3,
+    });
+
+    expect(page.items.map((message) => message.id)).toEqual([
+      createRecord(1).id,
+      deleted.id,
+      createRecord(3).id,
+    ]);
+    expect(page.items[1]).toMatchObject({
+      id: deleted.id,
+      body: null,
+      deletedAt: NOW,
+    });
+  });
+
   it("prevents a non-member from reading history", async () => {
     const service = new MessageService(
       new InMemoryMessageRepository(),
@@ -231,6 +324,129 @@ describe("message history service", () => {
 
     await expect(
       service.listMessages(ALICE_ID, CONVERSATION_ID, { limit: 50 }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
+  });
+});
+
+describe("message lifecycle service", () => {
+  it("lets the sender update content and publishes only after commit", async () => {
+    const lifecycle: string[] = [];
+    const repository = new InMemoryMessageRepository(lifecycle);
+    const original = createRecord(1);
+    repository.records.push(original);
+    const publisher = new RecordingPublisher(lifecycle);
+    const service = new MessageService(
+      repository,
+      new FakeConversationAccess(true),
+      publisher,
+      { now: () => NOW },
+    );
+
+    const updated = await service.updateMessage(
+      ALICE_ID,
+      CONVERSATION_ID,
+      original.id,
+      { content: { type: "text", text: "updated" } },
+    );
+
+    expect(updated).toMatchObject({ body: "updated", editedAt: NOW });
+    expect(publisher.updatedMessages).toEqual([updated]);
+    expect(lifecycle).toEqual(["commit", "publish:update"]);
+  });
+
+  it("treats an update with identical normalized content as a no-op", async () => {
+    const repository = new InMemoryMessageRepository();
+    const original = createRecord(1);
+    repository.records.push(original);
+    const publisher = new RecordingPublisher();
+    const service = new MessageService(
+      repository,
+      new FakeConversationAccess(true),
+      publisher,
+      { now: () => NOW },
+    );
+
+    const unchanged = await service.updateMessage(
+      ALICE_ID,
+      CONVERSATION_ID,
+      original.id,
+      { content: { type: "text", text: original.body } },
+    );
+
+    expect(unchanged.editedAt).toBeNull();
+    expect(publisher.updatedMessages).toHaveLength(0);
+  });
+
+  it("hides a message from a participant who is not its sender", async () => {
+    const repository = new InMemoryMessageRepository();
+    const original = createRecord(1);
+    repository.records.push(original);
+    const publisher = new RecordingPublisher();
+    const service = new MessageService(
+      repository,
+      new FakeConversationAccess(true),
+      publisher,
+      { now: () => NOW },
+    );
+
+    await expect(
+      service.updateMessage(BOB_ID, CONVERSATION_ID, original.id, {
+        content: { type: "text", text: "not allowed" },
+      }),
+    ).rejects.toBeInstanceOf(MessageNotFoundError);
+    await expect(
+      service.deleteMessage(BOB_ID, CONVERSATION_ID, original.id),
+    ).rejects.toBeInstanceOf(MessageNotFoundError);
+    expect(publisher.updatedMessages).toHaveLength(0);
+    expect(publisher.deletedMessages).toHaveLength(0);
+  });
+
+  it("soft-deletes once, masks content and keeps repeated deletion idempotent", async () => {
+    const lifecycle: string[] = [];
+    const repository = new InMemoryMessageRepository(lifecycle);
+    const original = createRecord(1);
+    repository.records.push(original);
+    const publisher = new RecordingPublisher(lifecycle);
+    const service = new MessageService(
+      repository,
+      new FakeConversationAccess(true),
+      publisher,
+      { now: () => NOW },
+    );
+
+    const deleted = await service.deleteMessage(
+      ALICE_ID,
+      CONVERSATION_ID,
+      original.id,
+    );
+    const retry = await service.deleteMessage(
+      ALICE_ID,
+      CONVERSATION_ID,
+      original.id,
+    );
+
+    expect(deleted).toMatchObject({ body: null, deletedAt: NOW });
+    expect(retry).toEqual(deleted);
+    expect(original.body).toBe("message 1");
+    expect(publisher.deletedMessages).toEqual([deleted]);
+    expect(lifecycle).toEqual(["commit", "publish:delete"]);
+    await expect(
+      service.updateMessage(ALICE_ID, CONVERSATION_ID, original.id, {
+        content: { type: "text", text: "cannot revive" },
+      }),
+    ).rejects.toBeInstanceOf(MessageNotFoundError);
+  });
+
+  it("hides the conversation before looking up a message for a non-member", async () => {
+    const service = new MessageService(
+      new InMemoryMessageRepository(),
+      new FakeConversationAccess(false),
+      new RecordingPublisher(),
+      { now: () => NOW },
+    );
+
+    await expect(
+      service.deleteMessage(ALICE_ID, CONVERSATION_ID, createRecord(1).id),
     ).rejects.toBeInstanceOf(ConversationNotFoundError);
   });
 });

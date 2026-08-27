@@ -42,6 +42,7 @@ import { createSocketServer } from "../realtime/server/create-socket-server.js";
 
 const ALICE_ID = "11111111-1111-4111-8111-111111111111";
 const BOB_ID = "22222222-2222-4222-8222-222222222222";
+const CAROL_ID = "77777777-7777-4777-8777-777777777777";
 const CONVERSATION_ID = "33333333-3333-4333-8333-333333333333";
 const CLIENT_MESSAGE_ID = "44444444-4444-4444-8444-444444444444";
 const NOW = new Date("2030-01-01T00:00:00.000Z");
@@ -127,6 +128,7 @@ async function createHarness(
     new PrismaMessageRepository(prisma),
     conversationService,
     messagePublisher,
+    clock,
   );
   const authController = new AuthController({
     authService: runtime.authService,
@@ -227,6 +229,13 @@ async function seedConversation(): Promise<void> {
         email: "bob.contract@example.com",
         username: "bob_contract",
         displayName: "Bob Contract",
+        passwordHash: "unused",
+      },
+      {
+        id: CAROL_ID,
+        email: "carol.contract@example.com",
+        username: "carol_contract",
+        displayName: "Carol Contract",
         passwordHash: "unused",
       },
     ],
@@ -386,6 +395,159 @@ describe("backend behavior contracts against PostgreSQL", () => {
     expect(retry.body).toEqual(first.body);
     expect(eventCount).toBe(1);
     await expect(prisma.message.count()).resolves.toBe(1);
+  });
+
+  it("edits and soft-deletes only for the sender while preserving a masked tombstone", async () => {
+    const clock = new MutableClock();
+    const runtime = createAuthRuntime(clock);
+    const [aliceSession, bobSession, carolSession] = await Promise.all([
+      runtime.sessionService.createSession({ userId: ALICE_ID }),
+      runtime.sessionService.createSession({ userId: BOB_ID }),
+      runtime.sessionService.createSession({ userId: CAROL_ID }),
+    ]);
+    const { httpServer, url } = await createHarness(runtime, clock);
+    const alice = newClient(url, aliceSession.accessToken);
+    const bob = newClient(url, bobSession.accessToken);
+    await Promise.all([
+      connectAndWaitForReady(alice),
+      connectAndWaitForReady(bob),
+    ]);
+    await Promise.all([subscribe(alice), subscribe(bob)]);
+    const collectionPath =
+      `/api/v1/conversations/${CONVERSATION_ID}/messages`;
+    const created = await request(httpServer)
+      .post(collectionPath)
+      .set("Authorization", `Bearer ${aliceSession.accessToken}`)
+      .send({
+        clientMessageId: CLIENT_MESSAGE_ID,
+        content: { type: "text", text: "original body" },
+      })
+      .expect(201);
+    const messagePath = `${collectionPath}/${created.body.id}`;
+    let updatedEventCount = 0;
+    let deletedEventCount = 0;
+    alice.on("message:updated", () => {
+      updatedEventCount += 1;
+    });
+    bob.on("message:updated", () => {
+      updatedEventCount += 1;
+    });
+    alice.on("message:deleted", () => {
+      deletedEventCount += 1;
+    });
+    bob.on("message:deleted", () => {
+      deletedEventCount += 1;
+    });
+    const aliceUpdateEvent = new Promise((resolve) => {
+      alice.once("message:updated", resolve);
+    });
+    const bobUpdateEvent = new Promise((resolve) => {
+      bob.once("message:updated", resolve);
+    });
+
+    const updatedResponse = await request(httpServer)
+      .patch(messagePath)
+      .set("Authorization", `Bearer ${aliceSession.accessToken}`)
+      .send({ content: { type: "text", text: "edited body" } })
+      .expect(200);
+    const [aliceUpdated, bobUpdated] = await Promise.all([
+      aliceUpdateEvent,
+      bobUpdateEvent,
+    ]);
+
+    expect(aliceUpdated).toEqual({ message: updatedResponse.body });
+    expect(bobUpdated).toEqual({ message: updatedResponse.body });
+    expect(updatedResponse.body).toMatchObject({
+      body: "edited body",
+      editedAt: NOW.toISOString(),
+      deletedAt: null,
+    });
+
+    await request(httpServer)
+      .patch(messagePath)
+      .set("Authorization", `Bearer ${bobSession.accessToken}`)
+      .send({ content: { type: "text", text: "bob cannot edit" } })
+      .expect(404)
+      .expect(({ body }) => {
+        expect(body.error.code).toBe("MESSAGE_NOT_FOUND");
+      });
+    await request(httpServer)
+      .delete(messagePath)
+      .set("Authorization", `Bearer ${carolSession.accessToken}`)
+      .expect(404)
+      .expect(({ body }) => {
+        expect(body.error.code).toBe("CONVERSATION_NOT_FOUND");
+      });
+
+    const aliceDeleteEvent = new Promise((resolve) => {
+      alice.once("message:deleted", resolve);
+    });
+    const bobDeleteEvent = new Promise((resolve) => {
+      bob.once("message:deleted", resolve);
+    });
+    const deletedResponse = await request(httpServer)
+      .delete(messagePath)
+      .set("Authorization", `Bearer ${aliceSession.accessToken}`)
+      .expect(200);
+    const [aliceDeleted, bobDeleted] = await Promise.all([
+      aliceDeleteEvent,
+      bobDeleteEvent,
+    ]);
+
+    expect(aliceDeleted).toEqual({ message: deletedResponse.body });
+    expect(bobDeleted).toEqual({ message: deletedResponse.body });
+    expect(deletedResponse.body).toMatchObject({
+      body: null,
+      editedAt: NOW.toISOString(),
+      deletedAt: NOW.toISOString(),
+    });
+
+    clock.advance(1_000);
+    const repeatedDelete = await request(httpServer)
+      .delete(messagePath)
+      .set("Authorization", `Bearer ${aliceSession.accessToken}`)
+      .expect(200);
+    const createRetry = await request(httpServer)
+      .post(collectionPath)
+      .set("Authorization", `Bearer ${aliceSession.accessToken}`)
+      .send({
+        clientMessageId: CLIENT_MESSAGE_ID,
+        content: { type: "text", text: "must not revive" },
+      })
+      .expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(repeatedDelete.body).toEqual(deletedResponse.body);
+    expect(createRetry.body).toEqual(deletedResponse.body);
+    expect(updatedEventCount).toBe(2);
+    expect(deletedEventCount).toBe(2);
+
+    const stored = await prisma.message.findUniqueOrThrow({
+      where: { id: created.body.id },
+    });
+    expect(stored.body).toBe("edited body");
+    expect(stored.editedAt).toEqual(NOW);
+    expect(stored.deletedAt).toEqual(NOW);
+
+    const history = await request(httpServer)
+      .get(collectionPath)
+      .set("Authorization", `Bearer ${bobSession.accessToken}`)
+      .expect(200);
+    expect(history.body.items).toEqual([deletedResponse.body]);
+
+    const conversationService = new ConversationService(
+      new PrismaConversationRepository(prisma),
+    );
+    const conversations = await conversationService.listConversations(
+      BOB_ID,
+      { limit: 20 },
+    );
+    expect(conversations.items[0]?.lastMessage).toMatchObject({
+      id: created.body.id,
+      body: null,
+      deletedAt: NOW,
+    });
+    expect(conversations.items[0]?.unreadCount).toBe(1);
   });
 
   it("returns null cursors for empty and final pages and a base64url JSON cursor between pages", async () => {

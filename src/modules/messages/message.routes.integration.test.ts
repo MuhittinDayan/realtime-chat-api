@@ -9,14 +9,17 @@ import {
   type AccessAuthenticator,
 } from "../auth/auth.middleware.js";
 import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
+import { MessageNotFoundError } from "./message.errors.js";
 import { MessageController, type MessageHttpService } from "./message.controller.js";
 import { createMessageRouter } from "./message.routes.js";
 import type {
   CreateMessageBody,
   MessageHistoryQuery,
+  UpdateMessageBody,
 } from "./message.schema.js";
 import type {
   CreateMessageResult,
+  MessageDto,
   MessageHistoryResult,
 } from "./message.service.js";
 
@@ -33,6 +36,7 @@ const message = {
   body: "hello",
   createdAt: NOW,
   editedAt: null,
+  deletedAt: null,
 };
 
 class FakeAuthenticator implements AccessAuthenticator {
@@ -44,6 +48,8 @@ class FakeAuthenticator implements AccessAuthenticator {
 class FakeMessageService implements MessageHttpService {
   error: unknown = null;
   createInput: CreateMessageBody | null = null;
+  updateInput: UpdateMessageBody | null = null;
+  deletedMessageId: string | null = null;
 
   async createMessage(
     _userId: string,
@@ -66,6 +72,31 @@ class FakeMessageService implements MessageHttpService {
       throw this.error;
     }
     return { items: [message], nextCursor: null };
+  }
+
+  async updateMessage(
+    _userId: string,
+    _conversationId: string,
+    _messageId: string,
+    input: UpdateMessageBody,
+  ): Promise<MessageDto> {
+    if (this.error !== null) {
+      throw this.error;
+    }
+    this.updateInput = input;
+    return { ...message, body: input.content.text, editedAt: NOW };
+  }
+
+  async deleteMessage(
+    _userId: string,
+    _conversationId: string,
+    messageId: string,
+  ): Promise<MessageDto> {
+    if (this.error !== null) {
+      throw this.error;
+    }
+    this.deletedMessageId = messageId;
+    return { ...message, body: null, deletedAt: NOW };
   }
 }
 
@@ -189,5 +220,81 @@ describe("message HTTP routes", () => {
       .expect(404);
 
     expect(response.body.error.code).toBe("CONVERSATION_NOT_FOUND");
+  });
+
+  it("updates a message with trimmed text content", async () => {
+    const service = new FakeMessageService();
+    const response = await request(createTestApp(service))
+      .patch(
+        `/api/v1/conversations/${CONVERSATION_ID}/messages/${message.id}`,
+      )
+      .set("Authorization", "Bearer token")
+      .send({ content: { type: "text", text: "  updated  " } })
+      .expect(200);
+
+    expect(service.updateInput?.content.text).toBe("updated");
+    expect(response.body).toMatchObject({
+      id: message.id,
+      body: "updated",
+      editedAt: NOW.toISOString(),
+      deletedAt: null,
+    });
+  });
+
+  it("rejects invalid update content before service access", async () => {
+    const service = new FakeMessageService();
+    const response = await request(createTestApp(service))
+      .patch(
+        `/api/v1/conversations/${CONVERSATION_ID}/messages/${message.id}`,
+      )
+      .set("Authorization", "Bearer token")
+      .send({ content: { type: "text", text: "   " } })
+      .expect(400);
+
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(service.updateInput).toBeNull();
+  });
+
+  it("soft-deletes a message and returns its tombstone", async () => {
+    const service = new FakeMessageService();
+    const response = await request(createTestApp(service))
+      .delete(
+        `/api/v1/conversations/${CONVERSATION_ID}/messages/${message.id}`,
+      )
+      .set("Authorization", "Bearer token")
+      .expect(200);
+
+    expect(service.deletedMessageId).toBe(message.id);
+    expect(response.body).toMatchObject({
+      id: message.id,
+      body: null,
+      deletedAt: NOW.toISOString(),
+    });
+  });
+
+  it("returns generic message not found for an unauthorized mutation", async () => {
+    const service = new FakeMessageService();
+    service.error = new MessageNotFoundError();
+    const response = await request(createTestApp(service))
+      .delete(
+        `/api/v1/conversations/${CONVERSATION_ID}/messages/${message.id}`,
+      )
+      .set("Authorization", "Bearer token")
+      .expect(404);
+
+    expect(response.body.error.code).toBe("MESSAGE_NOT_FOUND");
+  });
+
+  it("rejects an invalid message UUID before service access", async () => {
+    const service = new FakeMessageService();
+    const response = await request(createTestApp(service))
+      .delete(
+        `/api/v1/conversations/${CONVERSATION_ID}/messages/not-a-uuid`,
+      )
+      .set("Authorization", "Bearer token")
+      .expect(400);
+
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(service.deletedMessageId).toBeNull();
   });
 });

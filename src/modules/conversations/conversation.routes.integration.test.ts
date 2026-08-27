@@ -68,6 +68,7 @@ class FakeConversationService implements ConversationHttpService {
             body: "hello",
             senderId: BOB_ID,
             createdAt: NOW,
+            deletedAt: null,
           },
           unreadCount: 3,
         },
@@ -137,6 +138,7 @@ describe("conversation HTTP routes", () => {
       body: "hello",
       senderId: BOB_ID,
       createdAt: NOW.toISOString(),
+      deletedAt: null,
     });
     expect(response.body.items[0].unreadCount).toBe(3);
   });
