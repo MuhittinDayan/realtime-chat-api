@@ -31,6 +31,7 @@ import {
 } from "../../modules/messages/message.service.js";
 import type { Clock } from "../../shared/time/clock.js";
 import { SocketMessagePublisher } from "../messages/message-publisher.js";
+import { SocketGroupPublisher } from "../groups/group-publisher.js";
 import { ConnectionRegistry } from "../presence/connection-registry.js";
 import { SocketPresencePublisher } from "../presence/presence-publisher.js";
 import type { SocketEventRateLimitPolicy } from "../rate-limit/socket-event-rate-limiter.js";
@@ -242,12 +243,15 @@ async function createHarness(
   typingLimit?: SocketEventRateLimitPolicy,
 ): Promise<{
   httpServer: HttpServer;
+  socketServer: SocketServer;
   url: string;
   access: FakeConversationAccess;
+  groupPublisher: SocketGroupPublisher;
 }> {
   const authenticator = new FakeAuthenticator();
   const access = new FakeConversationAccess();
   const publisher = new SocketMessagePublisher();
+  const groupPublisher = new SocketGroupPublisher();
   const messageService = new MessageService(
     new InMemoryMessageRepository(),
     access,
@@ -269,6 +273,7 @@ async function createHarness(
       ? {}
       : { presencePublisher: presence.publisher }),
     messagePublisher: publisher,
+    groupPublisher,
     clock: fixedClock,
     ...(typingLimit === undefined
       ? {}
@@ -282,8 +287,10 @@ async function createHarness(
   servers.push({ http: httpServer, socket: socketServer });
   return {
     httpServer,
+    socketServer,
     url: `http://127.0.0.1:${address.port}`,
     access,
+    groupPublisher,
   };
 }
 
@@ -403,6 +410,31 @@ describe("/chat Socket.IO integration", () => {
       ok: false,
       error: { code: "FORBIDDEN" },
     });
+  });
+
+  it("forces every active socket of a removed member out of the conversation room", async () => {
+    const { url, socketServer, groupPublisher } = await createHarness();
+    const firstBobClient = newClient(url, "valid-bob");
+    const secondBobClient = newClient(url, "valid-bob");
+    await Promise.all([
+      connectAndWaitForReady(firstBobClient),
+      connectAndWaitForReady(secondBobClient),
+    ]);
+    await Promise.all([subscribe(firstBobClient), subscribe(secondBobClient)]);
+    const room = `conversation:${CONVERSATION_ID}`;
+    const firstSocketId = firstBobClient.id;
+    const secondSocketId = secondBobClient.id;
+    if (firstSocketId === undefined || secondSocketId === undefined) {
+      throw new Error("Expected connected socket ids");
+    }
+    expect(socketServer.of("/chat").sockets.get(firstSocketId)?.rooms.has(room)).toBe(true);
+    expect(socketServer.of("/chat").sockets.get(secondSocketId)?.rooms.has(room)).toBe(true);
+
+    groupPublisher.publishMemberRemoved(CONVERSATION_ID, BOB_ID);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(socketServer.of("/chat").sockets.get(firstSocketId)?.rooms.has(room)).toBe(false);
+    expect(socketServer.of("/chat").sockets.get(secondSocketId)?.rooms.has(room)).toBe(false);
   });
 
   it("broadcasts a REST-created message only to subscribed clients", async () => {

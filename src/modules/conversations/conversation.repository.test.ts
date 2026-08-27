@@ -50,7 +50,6 @@ describe("Prisma conversation repository", () => {
       conversationId: "44444444-4444-4444-8444-444444444444",
       userId: ALICE_ID,
       leftAt: null,
-      conversation: { type: "DIRECT" },
     });
   });
 
@@ -123,6 +122,7 @@ describe("Prisma conversation repository", () => {
     await repository.listConversations({ userId: ALICE_ID, take: 21 });
 
     const query = findMany.mock.calls[0]?.[0];
+    expect(query.where).not.toHaveProperty("type");
     expect(query.where.members.some).toEqual({
       userId: ALICE_ID,
       leftAt: null,

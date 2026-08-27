@@ -11,11 +11,25 @@ import {
   ConversationController,
   type ConversationHttpService,
 } from "./conversation.controller.js";
-import { ConversationNotFoundError } from "./conversation.errors.js";
-import type { ListConversationsQuery } from "./conversation.schema.js";
+import {
+  ConversationConflictError,
+  ConversationNotFoundError,
+  InsufficientRoleError,
+  InvalidConversationOperationError,
+} from "./conversation.errors.js";
+import type {
+  AddGroupMemberBody,
+  CreateGroupConversationBody,
+  ListConversationsQuery,
+  TransferGroupOwnershipBody,
+  UpdateGroupMemberRoleBody,
+  UpdateGroupTitleBody,
+} from "./conversation.schema.js";
 import type {
   CreateDirectConversationResult,
   DirectConversationDto,
+  GroupConversationDto,
+  GroupMemberDto,
   ListConversationsResult,
 } from "./conversation.service.js";
 import { createConversationRouter } from "./conversation.routes.js";
@@ -38,6 +52,21 @@ const conversation: DirectConversationDto = {
   },
 };
 
+const groupMember: GroupMemberDto = {
+  userId: BOB_ID,
+  role: "MEMBER",
+  joinedAt: NOW,
+  user: conversation.otherUser,
+};
+
+const groupConversation: GroupConversationDto = {
+  id: CONVERSATION_ID,
+  type: "GROUP",
+  title: "Core team",
+  createdAt: NOW,
+  members: [groupMember],
+};
+
 class FakeAuthenticator implements AccessAuthenticator {
   async authenticateAccessToken() {
     return { userId: ALICE_ID, sessionId: "session", jwtId: "jwt" };
@@ -46,6 +75,7 @@ class FakeAuthenticator implements AccessAuthenticator {
 
 class FakeConversationService implements ConversationHttpService {
   getError: unknown = null;
+  mutationError: unknown = null;
 
   async getOrCreateDirectConversation(
     _currentUserId: string,
@@ -82,6 +112,63 @@ class FakeConversationService implements ConversationHttpService {
       throw this.getError;
     }
     return conversation;
+  }
+
+  async createGroupConversation(
+    _currentUserId: string,
+    _input: CreateGroupConversationBody,
+  ): Promise<GroupConversationDto> {
+    this.throwMutationError();
+    return groupConversation;
+  }
+
+  async updateGroupTitle(
+    _currentUserId: string,
+    _conversationId: string,
+    _input: UpdateGroupTitleBody,
+  ): Promise<GroupConversationDto> {
+    this.throwMutationError();
+    return groupConversation;
+  }
+
+  async addGroupMember(
+    _currentUserId: string,
+    _conversationId: string,
+    _input: AddGroupMemberBody,
+  ): Promise<GroupMemberDto> {
+    this.throwMutationError();
+    return groupMember;
+  }
+
+  async removeGroupMember(): Promise<void> {
+    this.throwMutationError();
+  }
+
+  async leaveGroup(): Promise<void> {
+    this.throwMutationError();
+  }
+
+  async updateGroupMemberRole(
+    _currentUserId: string,
+    _conversationId: string,
+    _userId: string,
+    _input: UpdateGroupMemberRoleBody,
+  ): Promise<GroupMemberDto> {
+    this.throwMutationError();
+    return { ...groupMember, role: "ADMIN" };
+  }
+
+  async transferGroupOwnership(
+    _currentUserId: string,
+    _conversationId: string,
+    _input: TransferGroupOwnershipBody,
+  ): Promise<GroupConversationDto> {
+    this.throwMutationError();
+    return groupConversation;
+  }
+
+  private throwMutationError(): void {
+    if (this.mutationError !== null) throw this.mutationError;
   }
 }
 
@@ -163,5 +250,85 @@ describe("conversation HTTP routes", () => {
       .expect(400);
 
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("requires authentication for group creation", async () => {
+    const response = await request(createTestApp(new FakeConversationService()))
+      .post("/api/v1/conversations/group")
+      .send({ title: "Core team", userIds: [BOB_ID, CONVERSATION_ID] })
+      .expect(401);
+
+    expect(response.body.error.code).toBe("AUTHENTICATION_REQUIRED");
+  });
+
+  it("creates a group with the approved body and returns its members", async () => {
+    const response = await request(createTestApp(new FakeConversationService()))
+      .post("/api/v1/conversations/group")
+      .set("Authorization", "Bearer token")
+      .send({ title: "Core team", userIds: [BOB_ID, CONVERSATION_ID] })
+      .expect(201);
+
+    expect(response.body).toMatchObject({
+      id: CONVERSATION_ID,
+      type: "GROUP",
+      title: "Core team",
+      members: [{ userId: BOB_ID, role: "MEMBER" }],
+    });
+  });
+
+  it("routes every approved group mutation endpoint", async () => {
+    const app = createTestApp(new FakeConversationService());
+    const auth = { Authorization: "Bearer token" };
+
+    await request(app).patch(`/api/v1/conversations/${CONVERSATION_ID}`).set(auth).send({ title: "Renamed" }).expect(200);
+    await request(app).post(`/api/v1/conversations/${CONVERSATION_ID}/members`).set(auth).send({ userId: BOB_ID }).expect(201);
+    await request(app).patch(`/api/v1/conversations/${CONVERSATION_ID}/members/${BOB_ID}`).set(auth).send({ role: "ADMIN" }).expect(200);
+    await request(app).put(`/api/v1/conversations/${CONVERSATION_ID}/owner`).set(auth).send({ userId: BOB_ID }).expect(200);
+    await request(app).delete(`/api/v1/conversations/${CONVERSATION_ID}/members/${BOB_ID}`).set(auth).expect(204);
+    await request(app).delete(`/api/v1/conversations/${CONVERSATION_ID}/members/me`).set(auth).expect(204);
+  });
+
+  it("returns the exact 403 INSUFFICIENT_ROLE envelope", async () => {
+    const service = new FakeConversationService();
+    service.mutationError = new InsufficientRoleError();
+    const response = await request(createTestApp(service))
+      .patch(`/api/v1/conversations/${CONVERSATION_ID}`)
+      .set("Authorization", "Bearer token")
+      .send({ title: "Denied" })
+      .expect(403);
+
+    expect(response.body.error).toMatchObject({
+      code: "INSUFFICIENT_ROLE",
+      message: "Your role does not permit this action",
+    });
+    expect(response.body.error.requestId).toEqual(expect.any(String));
+  });
+
+  it("returns 409 CONFLICT for OWNER targeting and active-member conflicts", async () => {
+    const service = new FakeConversationService();
+    service.mutationError = new ConversationConflictError("Ownership must be transferred first");
+    const response = await request(createTestApp(service))
+      .delete(`/api/v1/conversations/${CONVERSATION_ID}/members/${BOB_ID}`)
+      .set("Authorization", "Bearer token")
+      .expect(409);
+
+    expect(response.body.error).toMatchObject({
+      code: "CONFLICT",
+      message: "Ownership must be transferred first",
+    });
+  });
+
+  it("returns 400 when the generic member-removal path targets the caller", async () => {
+    const service = new FakeConversationService();
+    service.mutationError = new InvalidConversationOperationError("Use /members/me to leave the group");
+    const response = await request(createTestApp(service))
+      .delete(`/api/v1/conversations/${CONVERSATION_ID}/members/${ALICE_ID}`)
+      .set("Authorization", "Bearer token")
+      .expect(400);
+
+    expect(response.body.error).toMatchObject({
+      code: "INVALID_OPERATION",
+      message: "Use /members/me to leave the group",
+    });
   });
 });
