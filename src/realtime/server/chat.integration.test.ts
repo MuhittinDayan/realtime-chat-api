@@ -31,6 +31,7 @@ import {
 } from "../../modules/messages/message.service.js";
 import type { Clock } from "../../shared/time/clock.js";
 import { SocketMessagePublisher } from "../messages/message-publisher.js";
+import { SocketSessionRevocationPublisher } from "../auth/session-revocation-publisher.js";
 import { SocketGroupPublisher } from "../groups/group-publisher.js";
 import { ConnectionRegistry } from "../presence/connection-registry.js";
 import { SocketPresencePublisher } from "../presence/presence-publisher.js";
@@ -68,18 +69,19 @@ type ChatClientSocket = ClientSocket<
 
 class FakeAuthenticator implements AccessAuthenticator {
   async authenticateAccessToken(token: string) {
-    const users: Record<string, string> = {
-      "valid-alice": ALICE_ID,
-      "valid-bob": BOB_ID,
-      "valid-carol": CAROL_ID,
+    const sessions: Record<string, { userId: string; sessionId: string }> = {
+      "valid-alice": { userId: ALICE_ID, sessionId: `session-${ALICE_ID}` },
+      "valid-alice-other": { userId: ALICE_ID, sessionId: "session-alice-other" },
+      "valid-bob": { userId: BOB_ID, sessionId: `session-${BOB_ID}` },
+      "valid-carol": { userId: CAROL_ID, sessionId: `session-${CAROL_ID}` },
     };
-    const userId = users[token];
+    const session = sessions[token];
 
-    if (userId === undefined) {
+    if (session === undefined) {
       throw new InvalidTokenError();
     }
 
-    return { userId, sessionId: `session-${userId}`, jwtId: "jwt" };
+    return { ...session, jwtId: "jwt" };
   }
 }
 
@@ -247,11 +249,13 @@ async function createHarness(
   url: string;
   access: FakeConversationAccess;
   groupPublisher: SocketGroupPublisher;
+  sessionRevocationPublisher: SocketSessionRevocationPublisher;
 }> {
   const authenticator = new FakeAuthenticator();
   const access = new FakeConversationAccess();
   const publisher = new SocketMessagePublisher();
   const groupPublisher = new SocketGroupPublisher();
+  const sessionRevocationPublisher = new SocketSessionRevocationPublisher();
   const messageService = new MessageService(
     new InMemoryMessageRepository(),
     access,
@@ -274,6 +278,7 @@ async function createHarness(
       : { presencePublisher: presence.publisher }),
     messagePublisher: publisher,
     groupPublisher,
+    sessionRevocationPublisher,
     clock: fixedClock,
     ...(typingLimit === undefined
       ? {}
@@ -291,6 +296,7 @@ async function createHarness(
     url: `http://127.0.0.1:${address.port}`,
     access,
     groupPublisher,
+    sessionRevocationPublisher,
   };
 }
 
@@ -390,6 +396,29 @@ describe("/chat Socket.IO integration", () => {
     expect(ready.userId).toBe(ALICE_ID);
     expect(ready.socketId).toBe(client.id);
     expect(new Date(ready.serverTime).toISOString()).toBe(NOW.toISOString());
+  });
+
+  it("disconnects only sockets for revoked sessions and emits auth:revoked", async () => {
+    const { url, sessionRevocationPublisher } = await createHarness();
+    const currentClient = newClient(url, "valid-alice");
+    const revokedClient = newClient(url, "valid-alice-other");
+    await Promise.all([
+      connectAndWaitForReady(currentClient),
+      connectAndWaitForReady(revokedClient),
+    ]);
+    const revokedEvent = new Promise<void>((resolve) => {
+      revokedClient.once("auth:revoked", resolve);
+    });
+    const disconnected = new Promise<string>((resolve) => {
+      revokedClient.once("disconnect", resolve);
+    });
+
+    sessionRevocationPublisher.publishRevoked(["session-alice-other"]);
+
+    await revokedEvent;
+    await expect(disconnected).resolves.toBe("io server disconnect");
+    expect(revokedClient.connected).toBe(false);
+    expect(currentClient.connected).toBe(true);
   });
 
   it("allows a member to subscribe", async () => {

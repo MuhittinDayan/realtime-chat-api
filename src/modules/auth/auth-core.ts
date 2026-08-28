@@ -1,4 +1,5 @@
 import { env } from "../../config/env.js";
+import { socketSessionRevocationPublisher } from "../../realtime/auth/session-revocation-publisher.js";
 import { systemClock } from "../../shared/time/clock.js";
 import { PrismaAuthRepository } from "./auth.repository.js";
 import { AuthService } from "./auth.service.js";
@@ -41,4 +42,5 @@ export const authService = new AuthService({
     verifyPassword,
   },
   dummyPasswordHash: DUMMY_PASSWORD_HASH,
+  sessionRevocationPublisher: socketSessionRevocationPublisher,
 });

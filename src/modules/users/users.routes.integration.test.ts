@@ -9,8 +9,8 @@ import {
   type AccessAuthenticator,
 } from "../auth/auth.middleware.js";
 import { UsersController, type UsersHttpService } from "./users.controller.js";
-import type { SearchUsersQuery } from "./users.schema.js";
-import type { SearchUsersResult } from "./users.service.js";
+import type { SearchUsersQuery, UpdateCurrentUserInput } from "./users.schema.js";
+import type { CurrentUserProfile, SearchUsersResult } from "./users.service.js";
 import { createUsersRouter } from "./users.routes.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
@@ -23,6 +23,8 @@ class FakeAuthenticator implements AccessAuthenticator {
 
 class FakeUsersService implements UsersHttpService {
   input: { currentUserId: string; query: SearchUsersQuery } | null = null;
+  updateInput: { currentUserId: string; input: UpdateCurrentUserInput } | null = null;
+  updateError: unknown = null;
 
   async searchUsers(
     currentUserId: string,
@@ -39,6 +41,25 @@ class FakeUsersService implements UsersHttpService {
         },
       ],
       nextCursor: null,
+    };
+  }
+
+  async updateCurrentUser(
+    currentUserId: string,
+    input: UpdateCurrentUserInput,
+  ): Promise<CurrentUserProfile> {
+    this.updateInput = { currentUserId, input };
+    if (this.updateError !== null) {
+      throw this.updateError;
+    }
+    return {
+      id: currentUserId,
+      email: "alice@example.com",
+      username: input.username ?? "alice",
+      displayName: input.displayName ?? "Alice",
+      avatarUrl: null,
+      status: "ACTIVE",
+      createdAt: new Date("2030-01-01T00:00:00.000Z"),
     };
   }
 }
@@ -119,5 +140,38 @@ describe("users HTTP routes", () => {
 
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
     expect(service.input).toBeNull();
+  });
+
+  it("updates the authenticated user's profile", async () => {
+    const service = new FakeUsersService();
+    const response = await request(createTestApp(service))
+      .patch("/api/v1/users/me")
+      .set("Authorization", "Bearer token")
+      .send({ username: "new-alice", displayName: "New Alice" })
+      .expect(200);
+
+    expect(service.updateInput).toEqual({
+      currentUserId: USER_ID,
+      input: { username: "new-alice", displayName: "New Alice" },
+    });
+    expect(response.body.user).toEqual(
+      expect.objectContaining({
+        id: USER_ID,
+        username: "new-alice",
+        displayName: "New Alice",
+      }),
+    );
+  });
+
+  it("requires at least one editable profile field", async () => {
+    const service = new FakeUsersService();
+    const response = await request(createTestApp(service))
+      .patch("/api/v1/users/me")
+      .set("Authorization", "Bearer token")
+      .send({})
+      .expect(400);
+
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(service.updateInput).toBeNull();
   });
 });

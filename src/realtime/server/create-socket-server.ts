@@ -5,6 +5,10 @@ import { Server as SocketIoServer } from "socket.io";
 import { env } from "../../config/env.js";
 import { authService } from "../../modules/auth/auth-core.js";
 import type { AccessAuthenticator } from "../../modules/auth/auth.middleware.js";
+import {
+  socketSessionRevocationPublisher,
+  type SocketSessionRevocationPublisher,
+} from "../auth/session-revocation-publisher.js";
 import { conversationService } from "../../modules/conversations/conversation-core.js";
 import type { ConversationAccessService } from "../../modules/messages/message.service.js";
 import { socketGroupPublisher, type SocketGroupPublisher } from "../groups/group-publisher.js";
@@ -31,6 +35,7 @@ export interface CreateSocketServerOptions {
   messagePublisher?: SocketMessagePublisher;
   readPublisher?: SocketReadPublisher;
   groupPublisher?: SocketGroupPublisher;
+  sessionRevocationPublisher?: SocketSessionRevocationPublisher;
   clock?: Clock;
   typingRateLimitPolicy?: SocketEventRateLimitPolicy;
 }
@@ -50,12 +55,15 @@ export function createSocketServer(
   const publisher = options.messagePublisher ?? socketMessagePublisher;
   const readPublisher = options.readPublisher ?? socketReadPublisher;
   const groupPublisher = options.groupPublisher ?? socketGroupPublisher;
+  const sessionRevocationPublisher =
+    options.sessionRevocationPublisher ?? socketSessionRevocationPublisher;
   const presencePublisher =
     options.presencePublisher ?? socketPresencePublisher;
 
   publisher.bind(chatNamespace);
   readPublisher.bind(chatNamespace);
   groupPublisher.bind(chatNamespace);
+  sessionRevocationPublisher.bind(chatNamespace);
   presencePublisher.bind(chatNamespace);
   configureChatNamespace(chatNamespace, {
     authenticator: options.authenticator ?? authService,

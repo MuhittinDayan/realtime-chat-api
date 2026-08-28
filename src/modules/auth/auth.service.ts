@@ -5,6 +5,7 @@ import {
   UserAlreadyExistsError,
   UsernameAlreadyInUseError,
 } from "./auth.errors.js";
+import { RequestValidationError } from "../../shared/errors/request-validation-error.js";
 import type {
   AuthRepository,
   CreateUserData,
@@ -12,7 +13,11 @@ import type {
   UserStatus,
 } from "./auth.repository.js";
 import { UserUniqueConstraintError } from "./auth.repository.js";
-import type { LoginInput, RegisterInput } from "./auth.schema.js";
+import type {
+  ChangePasswordInput,
+  LoginInput,
+  RegisterInput,
+} from "./auth.schema.js";
 import { normalizeEmail } from "./auth.schema.js";
 import type { AuthContext } from "./auth.types.js";
 import type {
@@ -21,6 +26,7 @@ import type {
   RevokeAuthSessionInput,
   RotatedAuthSession,
 } from "./sessions/auth-session.service.js";
+import type { AuthSessionRecord } from "./sessions/auth-session.types.js";
 import type { AccessTokenPayload } from "./tokens/access-token.service.js";
 
 export interface PublicUser {
@@ -54,12 +60,45 @@ export interface PasswordService {
 }
 
 export interface AuthSessionManager {
-  createSession(input: { userId: string }): Promise<CreatedAuthSession>;
+  createSession(input: {
+    userId: string;
+    userAgent: string | null;
+  }): Promise<CreatedAuthSession>;
   findActiveSessionForUser(
     input: FindActiveAuthSessionInput,
   ): Promise<unknown>;
   rotateRefreshToken(refreshToken: string): Promise<RotatedAuthSession>;
-  revokeSession(input: RevokeAuthSessionInput): Promise<void>;
+  listActiveSessions(userId: string): Promise<readonly AuthSessionRecord[]>;
+  revokeSession(input: RevokeAuthSessionInput): Promise<boolean>;
+  revokeOtherSessions(
+    userId: string,
+    currentSessionId: string,
+  ): Promise<readonly string[]>;
+}
+
+export interface SessionRevocationPublisher {
+  publishRevoked(sessionIds: readonly string[]): Promise<void> | void;
+}
+
+const noopSessionRevocationPublisher: SessionRevocationPublisher = {
+  publishRevoked: () => undefined,
+};
+
+export interface AuthRequestMetadata {
+  userAgent: string | null;
+}
+
+export interface AuthSessionDto {
+  id: string;
+  userAgent: string | null;
+  createdAt: Date;
+  lastUsedAt: Date;
+  expiresAt: Date;
+  isCurrent: boolean;
+}
+
+export interface ListAuthSessionsResult {
+  items: readonly AuthSessionDto[];
 }
 
 export interface AccessTokenVerifier {
@@ -72,6 +111,7 @@ export interface AuthServiceDependencies {
   accessTokenVerifier: AccessTokenVerifier;
   passwordService: PasswordService;
   dummyPasswordHash: string;
+  sessionRevocationPublisher?: SessionRevocationPublisher;
 }
 
 function toPublicUser(user: UserRecord): PublicUser {
@@ -104,6 +144,7 @@ export class AuthService {
   private readonly accessTokenVerifier: AccessTokenVerifier;
   private readonly passwordService: PasswordService;
   private readonly dummyPasswordHash: string;
+  private readonly sessionRevocationPublisher: SessionRevocationPublisher;
 
   constructor(dependencies: AuthServiceDependencies) {
     this.authRepository = dependencies.authRepository;
@@ -111,6 +152,8 @@ export class AuthService {
     this.accessTokenVerifier = dependencies.accessTokenVerifier;
     this.passwordService = dependencies.passwordService;
     this.dummyPasswordHash = dependencies.dummyPasswordHash;
+    this.sessionRevocationPublisher =
+      dependencies.sessionRevocationPublisher ?? noopSessionRevocationPublisher;
   }
 
   async authenticateAccessToken(token: string): Promise<AuthContext> {
@@ -128,7 +171,10 @@ export class AuthService {
     };
   }
 
-  async register(input: RegisterInput): Promise<AuthResult> {
+  async register(
+    input: RegisterInput,
+    metadata: AuthRequestMetadata = { userAgent: null },
+  ): Promise<AuthResult> {
     const email = normalizeEmail(input.email);
     const [existingEmail, existingUsername] = await Promise.all([
       this.authRepository.findUserByEmail(email),
@@ -163,6 +209,7 @@ export class AuthService {
 
     const session = await this.authSessionService.createSession({
       userId: user.id,
+      userAgent: metadata.userAgent,
     });
 
     return {
@@ -174,7 +221,10 @@ export class AuthService {
     };
   }
 
-  async login(input: LoginInput): Promise<AuthResult> {
+  async login(
+    input: LoginInput,
+    metadata: AuthRequestMetadata = { userAgent: null },
+  ): Promise<AuthResult> {
     const user = await this.authRepository.findUserByEmail(
       normalizeEmail(input.email),
     );
@@ -194,6 +244,7 @@ export class AuthService {
 
     const session = await this.authSessionService.createSession({
       userId: user.id,
+      userAgent: metadata.userAgent,
     });
 
     return {
@@ -218,7 +269,105 @@ export class AuthService {
   }
 
   async logout(input: RevokeAuthSessionInput): Promise<void> {
-    await this.authSessionService.revokeSession(input);
+    if (await this.authSessionService.revokeSession(input)) {
+      await this.sessionRevocationPublisher.publishRevoked([input.sessionId]);
+    }
+  }
+
+  async changePassword(
+    currentUserId: string,
+    currentSessionId: string,
+    input: ChangePasswordInput,
+  ): Promise<void> {
+    const user = await this.authRepository.findAuthUserById(currentUserId);
+
+    if (
+      user === null ||
+      user.status !== "ACTIVE" ||
+      user.deletedAt !== null
+    ) {
+      throw new InvalidTokenError();
+    }
+
+    const currentPasswordMatches = await this.passwordService.verifyPassword(
+      user.passwordHash,
+      input.currentPassword,
+    );
+
+    if (!currentPasswordMatches) {
+      throw new InvalidCredentialsError();
+    }
+
+    if (input.currentPassword === input.newPassword) {
+      throw new RequestValidationError([
+        {
+          path: "body.newPassword",
+          message: "New password must be different from current password",
+        },
+      ]);
+    }
+
+    const passwordHash = await this.passwordService.hashPassword(
+      input.newPassword,
+    );
+    const updated = await this.authRepository.updatePassword(
+      currentUserId,
+      passwordHash,
+    );
+
+    if (!updated) {
+      throw new InvalidTokenError();
+    }
+
+    await this.revokeOtherSessions(currentUserId, currentSessionId);
+  }
+
+  async listSessions(
+    currentUserId: string,
+    currentSessionId: string,
+  ): Promise<ListAuthSessionsResult> {
+    const sessions = await this.authSessionService.listActiveSessions(
+      currentUserId,
+    );
+
+    return {
+      items: sessions.map((session) => ({
+        id: session.id,
+        userAgent: session.userAgent,
+        createdAt: session.createdAt,
+        lastUsedAt: session.lastUsedAt,
+        expiresAt: session.expiresAt,
+        isCurrent: session.id === currentSessionId,
+      })),
+    };
+  }
+
+  async revokeOwnedSession(
+    currentUserId: string,
+    sessionId: string,
+  ): Promise<boolean> {
+    const revoked = await this.authSessionService.revokeSession({
+      userId: currentUserId,
+      sessionId,
+    });
+
+    if (revoked) {
+      await this.sessionRevocationPublisher.publishRevoked([sessionId]);
+    }
+
+    return revoked;
+  }
+
+  async revokeOtherSessions(
+    currentUserId: string,
+    currentSessionId: string,
+  ): Promise<void> {
+    const revokedSessionIds =
+      await this.authSessionService.revokeOtherSessions(
+        currentUserId,
+        currentSessionId,
+      );
+    await this.sessionRevocationPublisher.publishRevoked(revokedSessionIds);
   }
 
   async getCurrentUser(userId: string): Promise<PublicUser> {

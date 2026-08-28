@@ -23,6 +23,12 @@ describe("HTTP rate-limit policies", () => {
         limit: 30,
         scope: "ip",
       },
+      passwordChange: {
+        identifier: "auth-password-change",
+        windowMs: 15 * 60_000,
+        limit: 10,
+        scope: "user",
+      },
       userSearch: {
         identifier: "user-search",
         windowMs: 60_000,
