@@ -1,6 +1,6 @@
 # Realtime Chat API
 
-Express, Socket.IO, Prisma ve PostgreSQL kullanan sohbet backend'i.
+Express, Socket.IO, Prisma, PostgreSQL ve S3 uyumlu object storage kullanan sohbet backend'i.
 
 ## Yerel Kurulum
 
@@ -36,7 +36,8 @@ Temiz bir makinede:
    uzunluğunda rastgele bir secret ile değiştirin. Diğer varsayılan veritabanı
    değerleri Compose ile doğrudan uyumludur.
 
-4. PostgreSQL'i başlatın, healthcheck'i bekleyin, Prisma Client'ı üretin,
+4. PostgreSQL ile MinIO'yu başlatın, healthcheck'leri bekleyin, avatar ve
+   attachment bucket'larını hazırlayın, Prisma Client'ı üretin,
    geliştirme ve test veritabanlarına migration uygulayın ve geliştirme
    verisini yükleyin:
 
@@ -44,10 +45,18 @@ Temiz bir makinede:
    npm run setup:local
    ```
 
-   Bu komut `postgres:17-alpine` container'ını başlatır. Ana veritabanı
+   Bu komut `postgres:17-alpine` ile pinlenmiş MinIO container'larını başlatır. Ana veritabanı
    `.env.example` ile aynı `postgresql://postgres:postgres@localhost:5432/chat`
    adresindedir. Vitest'in mevcut yapılandırmasına uygun `chat_test`
-   veritabanı da hazırlanır.
+   veritabanı da hazırlanır. MinIO API `http://localhost:9000`, yönetim konsolu
+   `http://localhost:9001` adresindedir. `chat-avatars` bucket'ında yalnızca
+   `public/*` anonim okunabilir; `incoming/*` ve `chat-attachments` private kalır.
+
+   Yalnızca bucket/policy kurulumunu yeniden çalıştırmak için:
+
+   ```sh
+   npm run setup:storage
+   ```
 
 5. API'yi başlatın:
 
@@ -77,15 +86,16 @@ korunur. Swagger route'ları production ortamında varsayılan olarak kapalıdı
 Seed kullanıcıları `alice@example.com` ve `bob@example.com`, geliştirme
 parolası `ChatMvp123!` olarak oluşturulur. Kaynak: `prisma/seed.ts`.
 
-PostgreSQL'i durdurmak için:
+PostgreSQL ve MinIO'yu durdurmak için:
 
 ```sh
 docker compose down
 ```
 
-`postgres_data` named volume'ü bu komutta korunur. Tamamen temiz bir
-veritabanıyla yeniden başlamak için `docker compose down -v` kullanılabilir;
-bu komut yerel veritabanı volume'ünü kalıcı olarak siler.
+`postgres_data` ve `minio_data` named volume'leri bu komutta korunur. Tamamen
+temiz bir veritabanı ve object storage ile yeniden başlamak için
+`docker compose down -v` kullanılabilir; bu komut her iki yerel volume'ü de
+kalıcı olarak siler.
 
 ## Kontroller
 
