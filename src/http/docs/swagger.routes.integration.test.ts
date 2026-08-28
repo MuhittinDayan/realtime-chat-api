@@ -25,6 +25,12 @@ describe("Swagger documentation routes", () => {
       "application/yaml",
     );
     expect(specResponse.text).toMatch(/^openapi: 3\.1\.0/m);
+    expect(specResponse.text).toContain(
+      "/api/v1/users/me/avatar/uploads:",
+    );
+    expect(specResponse.text).toContain(
+      "/api/v1/users/me/avatar/uploads/{uploadId}/complete:",
+    );
   });
 
   it("does not expose Swagger routes when disabled", async () => {
