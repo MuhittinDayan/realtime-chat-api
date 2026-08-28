@@ -25,11 +25,11 @@ Senaryolar migration uygulanmış gerçek PostgreSQL üzerinde `src/contracts/ba
 | Cursor uç durumları | `returns null cursors for empty and final pages and a base64url JSON cursor between pages` | `src/modules/messages/message.service.test.ts`, `src/modules/conversations/conversation.service.test.ts`, `src/modules/users/users.service.test.ts` |
 | Typing expiry | `does not emit typing false automatically when the five-second expiry passes` | `src/realtime/server/chat.integration.test.ts` |
 
-DB testinin migration ve tekillik dayanakları: `prisma/migrations/20260821000000_initial_chat_schema/migration.sql`, `prisma/schema.prisma`.
+DB testinin migration ve tekillik dayanakları: `prisma/migrations/20260821000000_initial_chat_schema/migration.sql`, `prisma/migrations/20260828074004_add_auth_session_user_agent/migration.sql`, `prisma/schema.prisma`.
 
 ## HTTP 429 işleme
 
-Login, register ve refresh IP'ye; kullanıcı arama ve mesaj oluşturma ise
+Login, register ve refresh IP'ye; parola değiştirme, kullanıcı arama ve mesaj oluşturma ise
 doğrulanmış kullanıcıya göre ayrı kotalar kullanır. Bir kotanın dolması diğer
 endpoint'in kotasını tüketmez. Limit aşıldığında frontend yeni isteği
 `Retry-After` başlığındaki saniye dolmadan otomatik tekrar etmemelidir.
@@ -169,6 +169,46 @@ Register/login/refresh HTTP gövdeleri access token'ın sona erme zamanını dö
 6. Yeni handshake'ten sonra `session:ready` bekle ve A senaryosundaki gibi konuşmaları yeniden subscribe et.
 
 Refresh token geçersizse cevap `401 INVALID_REFRESH_TOKEN`'dır. Aynı refresh token ile eşzamanlı iki rotasyondan yalnızca biri başarılı olur; diğeri `401` alır. Kaynaklar: `src/modules/auth/sessions/auth-session.service.ts`, `src/modules/auth/sessions/auth-session.repository.ts`; testler: `src/modules/auth/sessions/auth-session.service.test.ts`, `src/contracts/backend-contract.integration.test.ts`.
+
+## B.1. Profil, parola ve session yönetimi
+
+Profil güncelleme `PATCH /api/v1/users/me` ile yapılır. Gövdede `username` ve/veya `displayName` bulunmalıdır; boş gövde `400 VALIDATION_ERROR`, kullanılan bir username ise `409 USERNAME_ALREADY_IN_USE` döndürür.
+
+```http
+PATCH /api/v1/users/me HTTP/1.1
+Authorization: Bearer <access-token>
+Content-Type: application/json
+
+{
+  "username": "alice-new",
+  "displayName": "Alice New"
+}
+```
+
+Aktif session'lar `GET /api/v1/auth/sessions` ile listelenir. Her öğede `id`, nullable `userAgent`, `createdAt`, `lastUsedAt`, `expiresAt` ve `isCurrent` vardır. IP tutulmaz. `userAgent` ham ve istemci tarafından bildirilen bir değerdir; güvenilir cihaz kimliği değildir. Session oluşturulurken `User-Agent` yoksa veya session migration öncesinden geliyorsa null olabilir. `lastUsedAt` şu anda session oluşturma ve başarılı refresh rotasyonunda güncellenir; her HTTP isteğinin son görülme zamanı değildir.
+
+Parola değiştirme:
+
+```http
+PATCH /api/v1/auth/password HTTP/1.1
+Authorization: Bearer <access-token>
+Content-Type: application/json
+
+{
+  "currentPassword": "old-password-value",
+  "newPassword": "new-password-value"
+}
+```
+
+Yeni parola register ile aynı `12..128` karakter kuralını kullanır ve mevcut paroladan farklı olmalıdır. Başarı `204` döndürür; mevcut session açık kalır, diğer session'lar iptal edilir. Endpoint kullanıcı başına `10/15 dakika` sınırındadır.
+
+Belirli bir session `DELETE /api/v1/auth/sessions/{sessionId}`, mevcut dışındaki tüm session'lar `DELETE /api/v1/auth/sessions` ile iptal edilir. Hedef mevcut session ise refresh cookie de temizlenir. İptal edilen session için davranış üç katmanlı ve anlıktır:
+
+- Refresh token artık kullanılamaz.
+- Açık socket önce payload'sız `auth:revoked` alır, sonra sunucu tarafından kapanır.
+- Access JWT'nin imza/`exp` süresi henüz geçerli olsa bile her korumalı HTTP isteği token'daki `sid` + `sub` çiftini aktif DB session'ına karşı kontrol ettiği için sonraki istek `401 INVALID_TOKEN` döner.
+
+Dolayısıyla frontend "JWT doğal süresi dolana kadar HTTP çalışır" varsayımını kullanmamalıdır. `auth:revoked` alındığında yerel access token temizlenmeli ve yeniden giriş akışı başlatılmalıdır. Kaynaklar: `src/modules/auth/auth.service.ts`, `src/modules/auth/sessions/auth-session.repository.ts`, `src/realtime/auth/session-revocation-publisher.ts`; gerçek PostgreSQL testi: `src/modules/auth/auth.postgres.integration.test.ts`; socket testi: `src/realtime/server/chat.integration.test.ts`.
 
 ## C. `POST .../messages` idempotent retry
 

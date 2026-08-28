@@ -1,6 +1,6 @@
 # Realtime Chat API — Mevcut Durum ve Yol Haritası
 
-> Son inceleme: 27 Ağustos 2026
+> Son inceleme: 28 Ağustos 2026
 >
 > Proje sürümü: `0.1.0`
 >
@@ -10,11 +10,11 @@
 
 ## 1. Yönetici özeti
 
-Proje, bire bir ve grup mesajlaşmasına yönelik backend MVP'sinin ana akışlarını tamamlamış durumda. Kullanıcı kaydı ve oturum yönetimi, kullanıcı arama, DIRECT/GROUP konuşma yönetimi, mesaj gönderme, düzenleme, soft-delete ve geçmişi alma, okundu bilgisini ilerletme, Socket.IO üzerinden mesaj/okundu/typing/presence ve grup yaşam döngüsü yayınları kodda mevcut. Kod tabanı modüler, TypeScript strict kuralları açık ve servis–repository ayrımı genel olarak temiz.
+Proje, bire bir ve grup mesajlaşmasına yönelik backend MVP'sinin ana akışlarını tamamlamış durumda. Kullanıcı kaydı, profil/parola/session yönetimi, kullanıcı arama, DIRECT/GROUP konuşma yönetimi, mesaj gönderme, düzenleme, soft-delete ve geçmişi alma, okundu bilgisini ilerletme, Socket.IO üzerinden mesaj/okundu/typing/presence, grup yaşam döngüsü ve session iptali yayınları kodda mevcut. Kod tabanı modüler, TypeScript strict kuralları açık ve servis–repository ayrımı genel olarak temiz.
 
-FAZ 12 sonrasında 31 test dosyasındaki 181 testin tamamı geçti. Typecheck ve production build başarılı; mesaj yaşam döngüsü ile grup transaction/reaktivasyon senaryoları migration uygulanmış PostgreSQL 17 üzerinde doğrulandı. Docker Compose tabanlı tek-komut yerel kurulum, OpenAPI/Socket.IO sözleşmeleri, development/test ortamında Swagger UI, coverage eşikleri, güvenlik sertleştirmesi ve seri GitHub Actions hattı mevcuttur. Mevcut seviye **“sözleşmesi belgelenmiş, güvenlik temelleri sertleştirilmiş, gerçek veritabanıyla doğrulanmış ve tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
+FAZ 13a sonrasında 32 test dosyasındaki 202 testin tamamı geçti. Typecheck ve production build başarılı; mesaj/grup senaryolarına ek olarak parola değişiminin diğer session'ları iptal etmesi, iptal edilen session JWT'sinin HTTP'de anında reddi ve username tekillik davranışı migration uygulanmış PostgreSQL 17 üzerinde doğrulandı. Docker Compose tabanlı tek-komut yerel kurulum, OpenAPI/Socket.IO sözleşmeleri, development/test ortamında Swagger UI, coverage eşikleri, güvenlik sertleştirmesi ve seri GitHub Actions hattı mevcuttur. Mevcut seviye **“sözleşmesi belgelenmiş, güvenlik temelleri sertleştirilmiş, gerçek veritabanıyla doğrulanmış ve tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
 
-Bir sonraki backend adımı ürün önceliğine göre profil/hesap yönetimi veya çoklu instance güvenilirliği arasından seçilmelidir.
+Bir sonraki backend adımı ürün önceliğine göre avatar/dosya yükleme, e-posta doğrulama/parola sıfırlama veya çoklu instance güvenilirliği arasından seçilmelidir.
 
 ## 2. Teknoloji ve mimari özeti
 
@@ -64,6 +64,11 @@ Mesaj / okundu değişikliği
 | `POST /api/v1/auth/refresh` | Hazır | Refresh token rotasyonu |
 | `POST /api/v1/auth/logout` | Hazır | Aktif oturumu iptal etme |
 | `GET /api/v1/auth/me` | Hazır | Giriş yapmış kullanıcıyı alma |
+| `PATCH /api/v1/auth/password` | Hazır | Parola değiştirme ve diğer session'ları iptal etme |
+| `GET /api/v1/auth/sessions` | Hazır | Aktif session/cihaz listesini alma |
+| `DELETE /api/v1/auth/sessions` | Hazır | Mevcut dışındaki tüm session'ları iptal etme |
+| `DELETE /api/v1/auth/sessions/:sessionId` | Hazır | Belirli bir session'ı iptal etme |
+| `PATCH /api/v1/users/me` | Hazır | Username/görünen ad profilini güncelleme |
 | `GET /api/v1/users` | Hazır | Kullanıcı adı / görünen ad ile cursor tabanlı arama |
 | `POST /api/v1/conversations/direct` | Hazır | Tekrarlı ve yarışan isteklerde aynı doğrudan konuşmayı döndürme |
 | `POST /api/v1/conversations/group` | Hazır | En az üç üyeli grup oluşturma; oluşturanı OWNER yapma |
@@ -96,6 +101,7 @@ Namespace: `/chat`. Bağlantı sırasında access token `handshake.auth.token` a
 Sunucudan istemciye:
 
 - `session:ready`
+- `auth:revoked`
 - `message:created`
 - `message:updated`
 - `message:deleted`
@@ -118,20 +124,22 @@ Mevcut ana tablolar:
 - `conversation_members`: üyelik ve `MEMBER` / `ADMIN` / `OWNER` rolleri
 - `messages`: metin mesajı, istemci mesaj kimliği, düzenlenme/silinme alanları
 - `message_reads`: kullanıcı başına monoton ilerleyen okundu watermark'ı
-- `auth_sessions`: hash'lenmiş refresh token, süre ve iptal bilgisi
+- `auth_sessions`: hash'lenmiş refresh token, nullable user-agent, süre ve iptal bilgisi
 
 Doğrudan konuşma anahtarı ile konuşma tekilleştirilmiş; mesajlarda `(senderId, clientMessageId)` tekilliği ile istemci retry'ları idempotent hale getirilmiştir. Listeleme sorgularında offset yerine keyset/cursor sayfalama kullanılmıştır.
 
 ## 4. Kalite doğrulama sonucu
 
-27 Ağustos 2026 tarihinde aşağıdaki kontroller çalıştırıldı:
+28 Ağustos 2026 tarihinde aşağıdaki kontroller çalıştırıldı:
 
 | Kontrol | Sonuç |
 | --- | --- |
-| `npm test` | Başarılı — 31 dosya, 181/181 test |
+| `npm audit --omit=dev` | Başarılı — 0 production açığı |
+| `prisma generate` + `prisma validate` | Başarılı |
+| `npm test` | Başarılı — 32 dosya, 202/202 test |
 | `npm run typecheck` | Başarılı |
 | `npm run build` | Başarılı |
-| `npm test -- --coverage` | Başarılı — statement %83,41; branch %72,52; function %85,12; line %86,11 |
+| `npm test -- --coverage` | Başarılı — statement %84,35; branch %72,78; function %86,95; line %86,83 |
 | `npm run setup:local` | Başarılı — PostgreSQL 17, `chat` + `chat_test`, migration ve seed |
 
 Not: Typecheck ve build komutlarının ikisi de `prisma generate` çalıştırıyor. Bunlar aynı çalışma dizininde paralel başlatıldığında Windows üzerinde üretilen klasöre eşzamanlı erişim nedeniyle geçici `EPERM` oluşabiliyor. Seri çalıştırıldıklarında ikisi de başarılıdır. CI hattı ya kontrolleri seri çalıştırmalı ya da Prisma Client'ı tek bir hazırlık adımında üretmelidir.
@@ -198,8 +206,8 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 
 ### Ürün kapsamı
 
-- Mesaj düzenleme ve soft-delete yalnızca doğrudan konuşmalarda ve gönderen yetkisiyle desteklenir; grup/moderatör silmesi kapsam dışıdır.
-- Kullanıcı profilini güncelleme, avatar yükleme, parola sıfırlama/değiştirme, e-posta doğrulama ve “tüm cihazlardan çıkış” akışları yok.
+- Mesaj düzenleme ve soft-delete DIRECT ve GROUP konuşmalarında gönderen yetkisiyle desteklenir; grup yöneticisinin başka kullanıcının mesajını silmesi kapsam dışıdır.
+- Username/görünen ad profil güncellemesi, parola değiştirme, aktif session listesi, belirli session'ı ve mevcut dışındaki tüm session'ları iptal etme hazırdır. Avatar yükleme, parola sıfırlama ve e-posta doğrulama kapsam dışıdır.
 - Dosya/görsel eki, mesaj arama, bildirim, engelleme/raporlama ve moderasyon kapsam dışında.
 
 ### Ölçek ve güvenilirlik
@@ -219,7 +227,7 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 
 ### Güvenlik sertleştirmesi
 
-- Auth, kullanıcı arama ve mesaj oluşturma uçlarında IP/kullanıcı bazlı bağımsız rate limitler; `typing:set` için socket bazlı flood-control vardır.
+- Auth (parola değiştirme dahil), kullanıcı arama ve mesaj oluşturma uçlarında IP/kullanıcı bazlı bağımsız rate limitler; `typing:set` için socket bazlı flood-control vardır.
 - Helmet güvenlik header'ları uygulanır; HSTS yalnızca production ortamında etkinleşir.
 - Cross-site frontend ihtiyacı oluşursa mevcut `SameSite=Lax` yaklaşımı yeterli olmaz; `SameSite=None; Secure` ile ayrı bir CSRF token mekanizması gerekir.
 - Production dependency audit CI'dadır. Gitleaks ile çalışma ağacı ve Git geçmişi taranmıştır; secret taramasının CI'da otomatik çalıştırılması henüz eklenmemiştir.
@@ -240,8 +248,8 @@ P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritaba
 
 1. **Tamamlandı — Grup konuşmaları MVP.** Oluşturma, başlık, üye yaşam döngüsü, rol matrisi, sahiplik devri, 100 aktif üye sınırı ve GROUP socket event'leri eklendi.
 2. **Tamamlandı — Mesaj yaşam döngüsü.** Gönderen için düzenleme, idempotent soft-delete, tombstone gösterimi ve `message:updated` / `message:deleted` event'leri eklendi.
-3. Profil güncelleme ve avatar akışını ekle; dosya depolama kararı verilirse imzalı yükleme URL'lerini tercih et.
-4. Parola değiştirme/sıfırlama, e-posta doğrulama, aktif oturumları listeleme ve tüm cihazlardan çıkış akışlarını ekle.
+3. **Kısmen tamamlandı — Profil yönetimi.** Username/görünen ad güncellemesi hazırdır; avatar/dosya yükleme Faz 14'e bırakılmıştır.
+4. **Kısmen tamamlandı — Hesap ve session yönetimi.** Parola değiştirme, aktif session listesi, belirli session'ı ve diğer session'ları iptal etme hazırdır; e-posta doğrulama ve parola sıfırlama e-posta sağlayıcısı kararıyla sonraki faza bırakılmıştır.
 5. Backend sözleşme testlerinde reconnect sonrası yeniden abonelik, token refresh, idempotent retry, cursor pagination ve typing timeout davranışlarını doğrula; frontend geliştiricisine örnek istek/event akışlarını sağla. Frontend uygulama kodu bu backend planının kapsamı dışındadır.
 
 ### P2 — Çoklu instance ve güvenilir event teslimi
