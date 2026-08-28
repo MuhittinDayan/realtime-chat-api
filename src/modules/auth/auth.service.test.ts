@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RequestValidationError } from "../../shared/errors/request-validation-error.js";
 
 import {
   EmailAlreadyInUseError,
@@ -6,6 +7,9 @@ import {
   InvalidTokenError,
   UsernameAlreadyInUseError,
 } from "./auth.errors.js";
+import type {
+  AuthSessionRecord,
+} from "./sessions/auth-session.types.js";
 import type {
   AuthRepository,
   AuthUserRecord,
@@ -17,6 +21,7 @@ import {
   AuthService,
   type AuthSessionManager,
   type PasswordService,
+  type SessionRevocationPublisher,
 } from "./auth.service.js";
 import type {
   CreatedAuthSession,
@@ -79,6 +84,10 @@ class InMemoryAuthRepository implements AuthRepository {
     return null;
   }
 
+  async findAuthUserById(userId: string): Promise<AuthUserRecord | null> {
+    return this.users.get(userId) ?? null;
+  }
+
   async findUserById(userId: string): Promise<UserRecord | null> {
     const user = this.users.get(userId);
 
@@ -113,6 +122,17 @@ class InMemoryAuthRepository implements AuthRepository {
 
     return toUserRecord(user);
   }
+
+  async updatePassword(userId: string, passwordHash: string): Promise<boolean> {
+    const user = this.users.get(userId);
+
+    if (user === undefined || user.status !== "ACTIVE" || user.deletedAt !== null) {
+      return false;
+    }
+
+    this.users.set(userId, { ...user, passwordHash });
+    return true;
+  }
 }
 
 class FakePasswordService implements PasswordService {
@@ -135,8 +155,14 @@ class FakePasswordService implements PasswordService {
 class FakeAuthSessionManager implements AuthSessionManager {
   revokedSession: RevokeAuthSessionInput | null = null;
   validatedSession: RevokeAuthSessionInput | null = null;
+  sessions: readonly AuthSessionRecord[] = [];
+  otherSessionIds: readonly string[] = [];
+  revokeOtherInput: { userId: string; currentSessionId: string } | null = null;
 
-  async createSession(input: { userId: string }): Promise<CreatedAuthSession> {
+  async createSession(input: {
+    userId: string;
+    userAgent: string | null;
+  }): Promise<CreatedAuthSession> {
     return {
       sessionId: SESSION_ID,
       userId: input.userId,
@@ -170,8 +196,29 @@ class FakeAuthSessionManager implements AuthSessionManager {
     };
   }
 
-  async revokeSession(input: RevokeAuthSessionInput): Promise<void> {
+  async listActiveSessions(): Promise<readonly AuthSessionRecord[]> {
+    return this.sessions;
+  }
+
+  async revokeSession(input: RevokeAuthSessionInput): Promise<boolean> {
     this.revokedSession = input;
+    return true;
+  }
+
+  async revokeOtherSessions(
+    userId: string,
+    currentSessionId: string,
+  ): Promise<readonly string[]> {
+    this.revokeOtherInput = { userId, currentSessionId };
+    return this.otherSessionIds;
+  }
+}
+
+class FakeSessionRevocationPublisher implements SessionRevocationPublisher {
+  readonly publishedSessionIds: string[][] = [];
+
+  publishRevoked(sessionIds: readonly string[]): void {
+    this.publishedSessionIds.push([...sessionIds]);
   }
 }
 
@@ -194,19 +241,28 @@ function createHarness(initialUsers: readonly AuthUserRecord[] = []): {
   repository: InMemoryAuthRepository;
   passwordService: FakePasswordService;
   sessionManager: FakeAuthSessionManager;
+  sessionRevocationPublisher: FakeSessionRevocationPublisher;
 } {
   const repository = new InMemoryAuthRepository(initialUsers);
   const passwordService = new FakePasswordService();
   const sessionManager = new FakeAuthSessionManager();
+  const sessionRevocationPublisher = new FakeSessionRevocationPublisher();
   const service = new AuthService({
     authRepository: repository,
     authSessionService: sessionManager,
     accessTokenVerifier: new FakeAccessTokenVerifier(),
     passwordService,
     dummyPasswordHash: "dummy-password-hash",
+    sessionRevocationPublisher,
   });
 
-  return { service, repository, passwordService, sessionManager };
+  return {
+    service,
+    repository,
+    passwordService,
+    sessionManager,
+    sessionRevocationPublisher,
+  };
 }
 
 describe("auth service registration", () => {
@@ -368,5 +424,97 @@ describe("auth service current user and logout", () => {
       sessionId: SESSION_ID,
       userId: USER_ID,
     });
+  });
+});
+
+describe("auth service password and session management", () => {
+  it("changes the password, revokes other sessions, and publishes their ids", async () => {
+    const {
+      service,
+      repository,
+      sessionManager,
+      sessionRevocationPublisher,
+    } = createHarness([createUser()]);
+    sessionManager.otherSessionIds = ["other-session"];
+
+    await service.changePassword(USER_ID, SESSION_ID, {
+      currentPassword: "correct-password",
+      newPassword: "a-different-password",
+    });
+
+    expect(repository.users.get(USER_ID)?.passwordHash).toBe(
+      "hashed:a-different-password",
+    );
+    expect(sessionManager.revokeOtherInput).toEqual({
+      userId: USER_ID,
+      currentSessionId: SESSION_ID,
+    });
+    expect(sessionRevocationPublisher.publishedSessionIds).toEqual([
+      ["other-session"],
+    ]);
+  });
+
+  it("rejects an incorrect current password", async () => {
+    const { service } = createHarness([createUser()]);
+
+    await expect(
+      service.changePassword(USER_ID, SESSION_ID, {
+        currentPassword: "wrong-password",
+        newPassword: "a-different-password",
+      }),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
+  });
+
+  it("requires the new password to differ from the current password", async () => {
+    const { service } = createHarness([createUser()]);
+
+    await expect(
+      service.changePassword(USER_ID, SESSION_ID, {
+        currentPassword: "correct-password",
+        newPassword: "correct-password",
+      }),
+    ).rejects.toBeInstanceOf(RequestValidationError);
+  });
+
+  it("marks the current session and exposes only safe session fields", async () => {
+    const { service, sessionManager } = createHarness();
+    sessionManager.sessions = [
+      {
+        id: SESSION_ID,
+        userId: USER_ID,
+        userAgent: "Firefox",
+        createdAt: NOW,
+        lastUsedAt: NOW,
+        expiresAt: new Date(NOW.getTime() + 60_000),
+        revokedAt: null,
+      },
+    ];
+
+    const result = await service.listSessions(USER_ID, SESSION_ID);
+
+    expect(result.items).toEqual([
+      expect.objectContaining({ id: SESSION_ID, isCurrent: true }),
+    ]);
+    expect(result.items[0]).not.toHaveProperty("userId");
+    expect(result.items[0]).not.toHaveProperty("revokedAt");
+  });
+
+  it("revokes a selected owned session and all other sessions", async () => {
+    const {
+      service,
+      sessionManager,
+      sessionRevocationPublisher,
+    } = createHarness();
+    sessionManager.otherSessionIds = ["other-a", "other-b"];
+
+    await expect(
+      service.revokeOwnedSession(USER_ID, "selected-session"),
+    ).resolves.toBe(true);
+    await service.revokeOtherSessions(USER_ID, SESSION_ID);
+
+    expect(sessionRevocationPublisher.publishedSessionIds).toEqual([
+      ["selected-session"],
+      ["other-a", "other-b"],
+    ]);
   });
 });

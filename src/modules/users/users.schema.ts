@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import { decodeCursor } from "../../shared/pagination/cursor.js";
+import {
+  displayNameSchema,
+  usernameSchema,
+} from "../auth/auth.schema.js";
 
 export interface UserSearchCursor {
   username: string;
@@ -52,4 +56,16 @@ export const searchUsersQuerySchema = z
   })
   .strict();
 
+export const updateCurrentUserSchema = z
+  .object({
+    username: usernameSchema.optional(),
+    displayName: displayNameSchema.optional(),
+  })
+  .strict()
+  .refine(
+    (input) => input.username !== undefined || input.displayName !== undefined,
+    { message: "At least one profile field is required" },
+  );
+
 export type SearchUsersQuery = z.infer<typeof searchUsersQuerySchema>;
+export type UpdateCurrentUserInput = z.infer<typeof updateCurrentUserSchema>;

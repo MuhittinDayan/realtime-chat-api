@@ -33,10 +33,11 @@ Sunucunun kullandığı oda adları:
 
 ```text
 user:<userId>
+session:<sessionId>
 conversation:<conversationId>
 ```
 
-Her başarılı bağlantı `user:<userId>` odasına otomatik katılır. `conversation:<conversationId>` odasına katılım ise yalnızca istemcinin başarılı `conversation:subscribe` çağrısıyla gerçekleşir. Oda üyeliği socket bağlantısına aittir; bağlantı kapandığında Socket.IO bu socket'in oda üyeliklerini kaldırır. Yeni socket eski konuşma aboneliklerini sunucudan geri almaz ve tekrar `conversation:subscribe` göndermelidir. Kaynaklar: `src/realtime/rooms/room-names.ts`, `src/realtime/server/configure-chat-namespace.ts`; reconnect sözleşme testi: `src/contracts/backend-contract.integration.test.ts`.
+Her başarılı bağlantı `user:<userId>` ve JWT `sid` claim'inden üretilen `session:<sessionId>` odalarına otomatik katılır. Session odası yalnızca sunucunun oturum iptali hedeflemesi için kullanılan iç odadır; istemci bu odaya subscribe olmaz. `conversation:<conversationId>` odasına katılım ise yalnızca istemcinin başarılı `conversation:subscribe` çağrısıyla gerçekleşir. Oda üyeliği socket bağlantısına aittir; bağlantı kapandığında Socket.IO bu socket'in oda üyeliklerini kaldırır. Yeni socket eski konuşma aboneliklerini sunucudan geri almaz ve tekrar `conversation:subscribe` göndermelidir. Kaynaklar: `src/realtime/rooms/room-names.ts`, `src/realtime/server/configure-chat-namespace.ts`; reconnect sözleşme testi: `src/contracts/backend-contract.integration.test.ts`.
 
 Bağlantıda presence servisine `handleConnected(userId, socketId)`, kopuşta `handleDisconnected(userId, socketId)` bildirilir. Presence işlemi bağlantı/ayrılma event'ini bloke etmez; reddedilen promise mevcut kodda yutulur. Kaynak: `src/realtime/server/configure-chat-namespace.ts`.
 
@@ -170,6 +171,12 @@ Ack callback yoksa işlem yapılmaz. Tekrarlanan UUID'ler servis çağrısından
 ### `session:ready`
 
 Başarılı handshake sonrasında, socket kendi `user:<userId>` odasına katıldıktan sonra yalnızca yeni socket'e gönderilir.
+
+### `auth:revoked`
+
+Payload yoktur. Session parola değişikliği, belirli session'ı silme, diğer session'ları silme veya logout nedeniyle iptal edildiğinde sunucu o `session:<sessionId>` odasındaki socket'lere önce `auth:revoked` yayınlar, ardından bağlantıları sunucu tarafından kapatır. İstemci `disconnect` reason olarak `io server disconnect` görür; Socket.IO bu durumda otomatik reconnect yapmaz. Frontend yerel access token'ı temizlemeli, kullanıcıya oturumun sonlandırıldığını bildirmeli ve login ekranına yönlendirmelidir.
+
+Mevcut session açık bırakılarak diğer session'lar iptal edildiğinde yalnızca hedef session odalarındaki socket'ler kapanır. Aynı kullanıcının mevcut cihazdaki socket'i bağlı kalır. Kaynaklar: `src/realtime/auth/session-revocation-publisher.ts`, `src/realtime/server/configure-chat-namespace.ts`; test: `src/realtime/server/chat.integration.test.ts`.
 
 ```ts
 {

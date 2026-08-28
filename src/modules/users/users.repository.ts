@@ -1,6 +1,16 @@
-import type { PrismaClient } from "../../generated/prisma/client.js";
+import {
+  Prisma,
+  type PrismaClient,
+} from "../../generated/prisma/client.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
-import type { UserSearchCursor } from "./users.schema.js";
+import {
+  toUserUniqueConstraintError,
+  type UserRecord,
+} from "../auth/auth.repository.js";
+import type {
+  UpdateCurrentUserInput,
+  UserSearchCursor,
+} from "./users.schema.js";
 
 export interface SearchableUserRecord {
   id: string;
@@ -20,6 +30,10 @@ export interface UsersRepository {
   searchUsers(
     input: SearchUsersRepositoryInput,
   ): Promise<readonly SearchableUserRecord[]>;
+  updateCurrentUser(
+    userId: string,
+    input: UpdateCurrentUserInput,
+  ): Promise<UserRecord | null>;
 }
 
 const publicUserSelect = {
@@ -27,6 +41,17 @@ const publicUserSelect = {
   username: true,
   displayName: true,
   avatarUrl: true,
+} as const;
+
+const currentUserSelect = {
+  id: true,
+  email: true,
+  username: true,
+  displayName: true,
+  avatarUrl: true,
+  status: true,
+  createdAt: true,
+  deletedAt: true,
 } as const;
 
 export class PrismaUsersRepository implements UsersRepository {
@@ -77,5 +102,40 @@ export class PrismaUsersRepository implements UsersRepository {
       take: input.take,
       select: publicUserSelect,
     });
+  }
+
+  async updateCurrentUser(
+    userId: string,
+    input: UpdateCurrentUserInput,
+  ): Promise<UserRecord | null> {
+    try {
+      return await this.client.user.update({
+        where: { id: userId },
+        data: {
+          ...(input.username === undefined
+            ? {}
+            : { username: input.username }),
+          ...(input.displayName === undefined
+            ? {}
+            : { displayName: input.displayName }),
+        },
+        select: currentUserSelect,
+      });
+    } catch (error: unknown) {
+      const uniqueError = toUserUniqueConstraintError(error);
+
+      if (uniqueError !== null) {
+        throw uniqueError;
+      }
+
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2025"
+      ) {
+        return null;
+      }
+
+      throw error;
+    }
   }
 }

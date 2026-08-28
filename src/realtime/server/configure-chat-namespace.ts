@@ -11,7 +11,11 @@ import {
   type SocketEventRateLimitPolicy,
   typingRateLimitPolicy,
 } from "../rate-limit/socket-event-rate-limiter.js";
-import { conversationRoom, userRoom } from "../rooms/room-names.js";
+import {
+  conversationRoom,
+  sessionRoom,
+  userRoom,
+} from "../rooms/room-names.js";
 import type {
   ChatClientToServerEvents,
   ChatInterServerEvents,
@@ -58,7 +62,7 @@ export function configureChatNamespace(
   namespace.use(createSocketAuthenticationMiddleware(options.authenticator));
 
   namespace.on("connection", (socket) => {
-    const { userId, sessionId: _sessionId } = socket.data;
+    const { userId, sessionId } = socket.data;
     const typingRateLimiter = new SocketEventRateLimiter(
       options.typingRateLimitPolicy ?? typingRateLimitPolicy,
     );
@@ -169,7 +173,9 @@ export function configureChatNamespace(
       acknowledge({ ok: true, data: snapshot });
     });
 
-    void Promise.resolve(socket.join(userRoom(userId))).then(() => {
+    void Promise.resolve(
+      socket.join([userRoom(userId), sessionRoom(sessionId)]),
+    ).then(() => {
       socket.emit("session:ready", {
         userId,
         socketId: socket.id,

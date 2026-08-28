@@ -5,13 +5,16 @@ import type {
   AuthSessionRepository,
   CreateAuthSessionData,
   FindActiveAuthSessionData,
+  ListActiveAuthSessionsData,
   RevokeAuthSessionData,
+  RevokeOtherAuthSessionsData,
   RotateRefreshTokenData,
 } from "./auth-session.types.js";
 
 const authSessionSelect = {
   id: true,
   userId: true,
+  userAgent: true,
   expiresAt: true,
   lastUsedAt: true,
   revokedAt: true,
@@ -27,6 +30,7 @@ export class PrismaAuthSessionRepository implements AuthSessionRepository {
         id: data.id,
         userId: data.userId,
         refreshTokenHash: data.refreshTokenHash,
+        userAgent: data.userAgent,
         expiresAt: data.expiresAt,
         lastUsedAt: data.lastUsedAt,
       },
@@ -70,6 +74,20 @@ export class PrismaAuthSessionRepository implements AuthSessionRepository {
     });
   }
 
+  async listActiveSessions(
+    data: ListActiveAuthSessionsData,
+  ): Promise<readonly AuthSessionRecord[]> {
+    return this.client.authSession.findMany({
+      where: {
+        userId: data.userId,
+        revokedAt: null,
+        expiresAt: { gt: data.now },
+      },
+      orderBy: [{ lastUsedAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+      select: authSessionSelect,
+    });
+  }
+
   async rotateRefreshToken(data: RotateRefreshTokenData): Promise<boolean> {
     const result = await this.client.authSession.updateMany({
       where: {
@@ -95,14 +113,47 @@ export class PrismaAuthSessionRepository implements AuthSessionRepository {
     return result.count === 1;
   }
 
-  async revokeSession(data: RevokeAuthSessionData): Promise<void> {
-    await this.client.authSession.updateMany({
+  async revokeSession(data: RevokeAuthSessionData): Promise<boolean> {
+    const result = await this.client.authSession.updateMany({
       where: {
         id: data.sessionId,
         userId: data.userId,
         revokedAt: null,
       },
       data: { revokedAt: data.revokedAt },
+    });
+
+    return result.count === 1;
+  }
+
+  async revokeOtherSessions(
+    data: RevokeOtherAuthSessionsData,
+  ): Promise<readonly string[]> {
+    return this.client.$transaction(async (transaction) => {
+      const sessions = await transaction.authSession.findMany({
+        where: {
+          userId: data.userId,
+          id: { not: data.currentSessionId },
+          revokedAt: null,
+        },
+        select: { id: true },
+      });
+      const sessionIds = sessions.map((session) => session.id);
+
+      if (sessionIds.length === 0) {
+        return [];
+      }
+
+      await transaction.authSession.updateMany({
+        where: {
+          userId: data.userId,
+          id: { in: sessionIds },
+          revokedAt: null,
+        },
+        data: { revokedAt: data.revokedAt },
+      });
+
+      return sessionIds;
     });
   }
 

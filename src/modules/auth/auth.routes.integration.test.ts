@@ -16,9 +16,11 @@ import {
   createTrustedOriginMiddleware,
   type AccessAuthenticator,
 } from "./auth.middleware.js";
-import type { LoginInput, RegisterInput } from "./auth.schema.js";
+import type { ChangePasswordInput, LoginInput, RegisterInput } from "./auth.schema.js";
 import type {
+  AuthRequestMetadata,
   AuthResult,
+  ListAuthSessionsResult,
   PublicUser,
   RefreshResult,
 } from "./auth.service.js";
@@ -61,15 +63,28 @@ const refreshResult: RefreshResult = {
 class FakeAuthHttpService implements AuthHttpService {
   registerInput: RegisterInput | null = null;
   loginInput: LoginInput | null = null;
+  registerMetadata: AuthRequestMetadata | null = null;
+  loginMetadata: AuthRequestMetadata | null = null;
   refreshInput: string | null = null;
   logoutInput: { sessionId: string; userId: string } | null = null;
+  changePasswordInput: {
+    userId: string;
+    sessionId: string;
+    input: ChangePasswordInput;
+  } | null = null;
+  revokedSessionInput: { userId: string; sessionId: string } | null = null;
+  revokedOtherSessionsInput: { userId: string; sessionId: string } | null = null;
   registerError: unknown = null;
   loginError: unknown = null;
   refreshError: unknown = null;
   currentUserError: unknown = null;
 
-  async register(input: RegisterInput): Promise<AuthResult> {
+  async register(
+    input: RegisterInput,
+    metadata?: AuthRequestMetadata,
+  ): Promise<AuthResult> {
     this.registerInput = input;
+    this.registerMetadata = metadata ?? null;
 
     if (this.registerError !== null) {
       throw this.registerError;
@@ -78,8 +93,12 @@ class FakeAuthHttpService implements AuthHttpService {
     return authResult;
   }
 
-  async login(input: LoginInput): Promise<AuthResult> {
+  async login(
+    input: LoginInput,
+    metadata?: AuthRequestMetadata,
+  ): Promise<AuthResult> {
     this.loginInput = input;
+    this.loginMetadata = metadata ?? null;
 
     if (this.loginError !== null) {
       throw this.loginError;
@@ -112,6 +131,41 @@ class FakeAuthHttpService implements AuthHttpService {
 
     return publicUser;
   }
+
+  async changePassword(
+    userId: string,
+    sessionId: string,
+    input: ChangePasswordInput,
+  ): Promise<void> {
+    this.changePasswordInput = { userId, sessionId, input };
+  }
+
+  async listSessions(
+    _userId: string,
+    sessionId: string,
+  ): Promise<ListAuthSessionsResult> {
+    return {
+      items: [
+        {
+          id: sessionId,
+          userAgent: "test-agent",
+          createdAt: NOW,
+          lastUsedAt: NOW,
+          expiresAt: authResult.refreshTokenExpiresAt,
+          isCurrent: true,
+        },
+      ],
+    };
+  }
+
+  async revokeOwnedSession(userId: string, sessionId: string): Promise<boolean> {
+    this.revokedSessionInput = { userId, sessionId };
+    return true;
+  }
+
+  async revokeOtherSessions(userId: string, sessionId: string): Promise<void> {
+    this.revokedOtherSessionsInput = { userId, sessionId };
+  }
 }
 
 class FakeAccessAuthenticator implements AccessAuthenticator {
@@ -138,6 +192,7 @@ interface TestAppOptions {
   loginRateLimitMiddleware?: RequestHandler;
   registerRateLimitMiddleware?: RequestHandler;
   refreshRateLimitMiddleware?: RequestHandler;
+  passwordChangeRateLimitMiddleware?: RequestHandler;
 }
 
 const noRateLimit: RequestHandler = (_request, _response, next) => next();
@@ -168,6 +223,8 @@ function createTestApp(
       options.registerRateLimitMiddleware ?? noRateLimit,
     refreshRateLimitMiddleware:
       options.refreshRateLimitMiddleware ?? noRateLimit,
+    passwordChangeRateLimitMiddleware:
+      options.passwordChangeRateLimitMiddleware ?? noRateLimit,
   });
   const apiRouter = Router();
   apiRouter.use("/auth", authRouter);
@@ -481,5 +538,125 @@ describe("auth HTTP routes", () => {
       .expect(401);
 
     expect(response.body.error.code).toBe("INVALID_CREDENTIALS");
+  });
+
+  it("passes user-agent metadata when creating a session", async () => {
+    const service = new FakeAuthHttpService();
+
+    await request(createTestApp(service))
+      .post("/api/v1/auth/login")
+      .set("User-Agent", "Firefox test agent")
+      .send({ email: "alice@example.com", password: "correct-password" })
+      .expect(200);
+
+    expect(service.loginMetadata).toEqual({ userAgent: "Firefox test agent" });
+  });
+
+  it("changes a password using the authenticated user and session", async () => {
+    const service = new FakeAuthHttpService();
+
+    await request(createTestApp(service))
+      .patch("/api/v1/auth/password")
+      .set("Authorization", "Bearer valid-access-token")
+      .send({
+        currentPassword: "correct-password",
+        newPassword: "a-different-password",
+      })
+      .expect(204);
+
+    expect(service.changePasswordInput).toEqual({
+      userId: USER_ID,
+      sessionId: SESSION_ID,
+      input: {
+        currentPassword: "correct-password",
+        newPassword: "a-different-password",
+      },
+    });
+  });
+
+  it("uses the registration password policy for a changed password", async () => {
+    const service = new FakeAuthHttpService();
+    const response = await request(createTestApp(service))
+      .patch("/api/v1/auth/password")
+      .set("Authorization", "Bearer valid-access-token")
+      .send({ currentPassword: "correct-password", newPassword: "short" })
+      .expect(400);
+
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(service.changePasswordInput).toBeNull();
+  });
+
+  it("rate limits password changes per authenticated user", async () => {
+    const service = new FakeAuthHttpService();
+    const app = createTestApp(service, {
+      passwordChangeRateLimitMiddleware: createHttpRateLimiter({
+        identifier: "test-auth-password-change",
+        windowMs: 60_000,
+        limit: 1,
+        scope: "user",
+      }),
+    });
+    const payload = {
+      currentPassword: "correct-password",
+      newPassword: "a-different-password",
+    };
+
+    await request(app)
+      .patch("/api/v1/auth/password")
+      .set("Authorization", "Bearer valid-access-token")
+      .send(payload)
+      .expect(204);
+    const rejected = await request(app)
+      .patch("/api/v1/auth/password")
+      .set("Authorization", "Bearer valid-access-token")
+      .send(payload)
+      .expect(429);
+
+    expect(rejected.body.error.code).toBe("RATE_LIMIT_EXCEEDED");
+  });
+
+  it("lists active sessions and marks the current one", async () => {
+    const response = await request(createTestApp(new FakeAuthHttpService()))
+      .get("/api/v1/auth/sessions")
+      .set("Authorization", "Bearer valid-access-token")
+      .expect(200);
+
+    expect(response.body.items).toEqual([
+      expect.objectContaining({ id: SESSION_ID, isCurrent: true }),
+    ]);
+    expect(response.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("revokes a selected session and all other sessions", async () => {
+    const service = new FakeAuthHttpService();
+    const app = createTestApp(service);
+    const selectedSessionId = "44444444-4444-4444-8444-444444444444";
+
+    await request(app)
+      .delete(`/api/v1/auth/sessions/${selectedSessionId}`)
+      .set("Authorization", "Bearer valid-access-token")
+      .expect(204);
+    await request(app)
+      .delete("/api/v1/auth/sessions")
+      .set("Authorization", "Bearer valid-access-token")
+      .expect(204);
+
+    expect(service.revokedSessionInput).toEqual({
+      userId: USER_ID,
+      sessionId: selectedSessionId,
+    });
+    expect(service.revokedOtherSessionsInput).toEqual({
+      userId: USER_ID,
+      sessionId: SESSION_ID,
+    });
+  });
+
+  it("rejects a malformed session id", async () => {
+    const response = await request(createTestApp(new FakeAuthHttpService()))
+      .delete("/api/v1/auth/sessions/not-a-uuid")
+      .set("Authorization", "Bearer valid-access-token")
+      .expect(400);
+
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
   });
 });

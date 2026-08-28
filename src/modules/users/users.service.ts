@@ -1,9 +1,17 @@
 import { encodeCursor } from "../../shared/pagination/cursor.js";
+import {
+  InvalidTokenError,
+  UsernameAlreadyInUseError,
+} from "../auth/auth.errors.js";
+import { UserUniqueConstraintError } from "../auth/auth.repository.js";
 import type {
   SearchableUserRecord,
   UsersRepository,
 } from "./users.repository.js";
-import type { SearchUsersQuery } from "./users.schema.js";
+import type {
+  SearchUsersQuery,
+  UpdateCurrentUserInput,
+} from "./users.schema.js";
 
 export interface PublicSearchUser {
   id: string;
@@ -15,6 +23,16 @@ export interface PublicSearchUser {
 export interface SearchUsersResult {
   items: readonly PublicSearchUser[];
   nextCursor: string | null;
+}
+
+export interface CurrentUserProfile {
+  id: string;
+  email: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  status: "ACTIVE" | "DISABLED";
+  createdAt: Date;
 }
 
 export class UsersService {
@@ -39,6 +57,45 @@ export class UsersService {
         ? createNextCursor(items.at(-1))
         : null,
     };
+  }
+
+  async updateCurrentUser(
+    currentUserId: string,
+    input: UpdateCurrentUserInput,
+  ): Promise<CurrentUserProfile> {
+    try {
+      const user = await this.usersRepository.updateCurrentUser(
+        currentUserId,
+        input,
+      );
+
+      if (
+        user === null ||
+        user.status !== "ACTIVE" ||
+        user.deletedAt !== null
+      ) {
+        throw new InvalidTokenError();
+      }
+
+      return {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
+        status: user.status,
+        createdAt: user.createdAt,
+      };
+    } catch (error: unknown) {
+      if (
+        error instanceof UserUniqueConstraintError &&
+        error.fields.includes("username")
+      ) {
+        throw new UsernameAlreadyInUseError();
+      }
+
+      throw error;
+    }
   }
 }
 

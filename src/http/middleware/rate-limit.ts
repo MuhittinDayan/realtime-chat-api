@@ -29,6 +29,12 @@ export const httpRateLimitPolicies = Object.freeze({
     limit: 30,
     scope: "ip",
   },
+  passwordChange: {
+    identifier: "auth-password-change",
+    windowMs: 15 * MINUTE,
+    limit: 10,
+    scope: "user",
+  },
   userSearch: {
     identifier: "user-search",
     windowMs: MINUTE,
@@ -87,6 +93,9 @@ export const registerRateLimit = createHttpRateLimiter(
 );
 export const refreshRateLimit = createHttpRateLimiter(
   httpRateLimitPolicies.refresh,
+);
+export const passwordChangeRateLimit = createHttpRateLimiter(
+  httpRateLimitPolicies.passwordChange,
 );
 export const userSearchRateLimit = createHttpRateLimiter(
   httpRateLimitPolicies.userSearch,

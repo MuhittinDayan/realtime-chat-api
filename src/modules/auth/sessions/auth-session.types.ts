@@ -1,6 +1,7 @@
 export interface AuthSessionRecord {
   id: string;
   userId: string;
+  userAgent: string | null;
   expiresAt: Date;
   lastUsedAt: Date;
   revokedAt: Date | null;
@@ -11,6 +12,7 @@ export interface CreateAuthSessionData {
   id: string;
   userId: string;
   refreshTokenHash: string;
+  userAgent: string | null;
   expiresAt: Date;
   lastUsedAt: Date;
 }
@@ -35,6 +37,17 @@ export interface FindActiveAuthSessionData {
   now: Date;
 }
 
+export interface ListActiveAuthSessionsData {
+  userId: string;
+  now: Date;
+}
+
+export interface RevokeOtherAuthSessionsData {
+  userId: string;
+  currentSessionId: string;
+  revokedAt: Date;
+}
+
 export interface AuthSessionRepository {
   createSession(data: CreateAuthSessionData): Promise<AuthSessionRecord>;
   findSessionById(sessionId: string): Promise<AuthSessionRecord | null>;
@@ -44,7 +57,13 @@ export interface AuthSessionRepository {
   findSessionByRefreshTokenHash(
     refreshTokenHash: string,
   ): Promise<AuthSessionRecord | null>;
+  listActiveSessions(
+    data: ListActiveAuthSessionsData,
+  ): Promise<readonly AuthSessionRecord[]>;
   rotateRefreshToken(data: RotateRefreshTokenData): Promise<boolean>;
-  revokeSession(data: RevokeAuthSessionData): Promise<void>;
+  revokeSession(data: RevokeAuthSessionData): Promise<boolean>;
+  revokeOtherSessions(
+    data: RevokeOtherAuthSessionsData,
+  ): Promise<readonly string[]>;
   updateLastUsedAt(sessionId: string, lastUsedAt: Date): Promise<boolean>;
 }

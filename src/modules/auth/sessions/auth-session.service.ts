@@ -32,6 +32,7 @@ export interface AuthSessionServiceDependencies {
 
 export interface CreateAuthSessionInput {
   userId: string;
+  userAgent?: string | null;
 }
 
 export interface CreatedAuthSession {
@@ -105,6 +106,7 @@ export class AuthSessionService {
       id: sessionId,
       userId: input.userId,
       refreshTokenHash,
+      userAgent: input.userAgent ?? null,
       expiresAt: refreshTokenExpiresAt,
       lastUsedAt: now,
     });
@@ -186,10 +188,28 @@ export class AuthSessionService {
     };
   }
 
-  async revokeSession(input: RevokeAuthSessionInput): Promise<void> {
-    await this.sessionRepository.revokeSession({
+  async listActiveSessions(userId: string): Promise<readonly AuthSessionRecord[]> {
+    return this.sessionRepository.listActiveSessions({
+      userId,
+      now: this.clock.now(),
+    });
+  }
+
+  async revokeSession(input: RevokeAuthSessionInput): Promise<boolean> {
+    return this.sessionRepository.revokeSession({
       sessionId: input.sessionId,
       userId: input.userId,
+      revokedAt: this.clock.now(),
+    });
+  }
+
+  async revokeOtherSessions(
+    userId: string,
+    currentSessionId: string,
+  ): Promise<readonly string[]> {
+    return this.sessionRepository.revokeOtherSessions({
+      userId,
+      currentSessionId,
       revokedAt: this.clock.now(),
     });
   }

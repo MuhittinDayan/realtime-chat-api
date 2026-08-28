@@ -3,6 +3,7 @@ import { Router, type RequestHandler } from "express";
 import { env } from "../../config/env.js";
 import {
   loginRateLimit,
+  passwordChangeRateLimit,
   refreshRateLimit,
   registerRateLimit,
 } from "../../http/middleware/rate-limit.js";
@@ -13,8 +14,14 @@ import {
   createAuthenticationMiddleware,
   createTrustedOriginMiddleware,
 } from "./auth.middleware.js";
-import { loginSchema, registerSchema } from "./auth.schema.js";
+import {
+  authSessionParamsSchema,
+  changePasswordSchema,
+  loginSchema,
+  registerSchema,
+} from "./auth.schema.js";
 import { withValidatedBody } from "./auth.validation.js";
+import { withValidatedParams } from "../../http/validation/request-validation.js";
 import { HttpRefreshCookieManager } from "./refresh-cookie.js";
 
 export interface CreateAuthRouterOptions {
@@ -24,6 +31,7 @@ export interface CreateAuthRouterOptions {
   loginRateLimitMiddleware?: RequestHandler;
   registerRateLimitMiddleware?: RequestHandler;
   refreshRateLimitMiddleware?: RequestHandler;
+  passwordChangeRateLimitMiddleware?: RequestHandler;
 }
 
 export function createAuthRouter(options: CreateAuthRouterOptions): Router {
@@ -50,6 +58,33 @@ export function createAuthRouter(options: CreateAuthRouterOptions): Router {
     options.trustedOriginMiddleware,
     options.authenticationMiddleware,
     options.controller.logout,
+  );
+  router.patch(
+    "/password",
+    options.trustedOriginMiddleware,
+    options.authenticationMiddleware,
+    options.passwordChangeRateLimitMiddleware ?? passwordChangeRateLimit,
+    withValidatedBody(changePasswordSchema, options.controller.changePassword),
+  );
+  router.get(
+    "/sessions",
+    options.authenticationMiddleware,
+    options.controller.listSessions,
+  );
+  router.delete(
+    "/sessions",
+    options.trustedOriginMiddleware,
+    options.authenticationMiddleware,
+    options.controller.revokeOtherSessions,
+  );
+  router.delete(
+    "/sessions/:sessionId",
+    options.trustedOriginMiddleware,
+    options.authenticationMiddleware,
+    withValidatedParams(
+      authSessionParamsSchema,
+      options.controller.revokeSession,
+    ),
   );
   router.get(
     "/me",

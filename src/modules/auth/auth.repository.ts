@@ -33,8 +33,10 @@ export interface CreateUserData {
 export interface AuthRepository {
   findUserByEmail(email: string): Promise<AuthUserRecord | null>;
   findUserById(userId: string): Promise<UserRecord | null>;
+  findAuthUserById(userId: string): Promise<AuthUserRecord | null>;
   findUserByUsername(username: string): Promise<{ id: string } | null>;
   createUser(data: CreateUserData): Promise<UserRecord>;
+  updatePassword(userId: string, passwordHash: string): Promise<boolean>;
 }
 
 export class UserUniqueConstraintError extends Error {
@@ -130,6 +132,14 @@ function readUniqueFields(error: unknown): readonly UserUniqueField[] | null {
   return fields;
 }
 
+export function toUserUniqueConstraintError(
+  error: unknown,
+): UserUniqueConstraintError | null {
+  const fields = readUniqueFields(error);
+
+  return fields === null ? null : new UserUniqueConstraintError(fields, error);
+}
+
 export class PrismaAuthRepository implements AuthRepository {
   constructor(private readonly client: PrismaClient = prisma) {}
 
@@ -144,6 +154,13 @@ export class PrismaAuthRepository implements AuthRepository {
     return this.client.user.findUnique({
       where: { id: userId },
       select: userSelect,
+    });
+  }
+
+  async findAuthUserById(userId: string): Promise<AuthUserRecord | null> {
+    return this.client.user.findUnique({
+      where: { id: userId },
+      select: authUserSelect,
     });
   }
 
@@ -169,13 +186,29 @@ export class PrismaAuthRepository implements AuthRepository {
         select: userSelect,
       });
     } catch (error: unknown) {
-      const uniqueFields = readUniqueFields(error);
+      const uniqueError = toUserUniqueConstraintError(error);
 
-      if (uniqueFields !== null) {
-        throw new UserUniqueConstraintError(uniqueFields, error);
+      if (uniqueError !== null) {
+        throw uniqueError;
       }
 
       throw error;
     }
+  }
+
+  async updatePassword(
+    userId: string,
+    passwordHash: string,
+  ): Promise<boolean> {
+    const result = await this.client.user.updateMany({
+      where: {
+        id: userId,
+        status: "ACTIVE",
+        deletedAt: null,
+      },
+      data: { passwordHash },
+    });
+
+    return result.count === 1;
   }
 }

@@ -68,6 +68,7 @@ export interface ChatClientToServerEvents {
 }
 
 export interface ChatServerToClientEvents {
+  "auth:revoked": () => void;
   "session:ready": (payload: {
     userId: string;
     socketId: string;

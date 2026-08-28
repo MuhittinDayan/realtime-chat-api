@@ -12,10 +12,12 @@ info:
     - Refresh token, adı `chat_refresh_token` olan `HttpOnly`, `SameSite=Lax`,
       `Path=/api/v1/auth` cookie'sinde tutulur; production ortamında ayrıca
       `Secure` niteliği kullanılır.
-    - Production ortamında `/auth/refresh` ve `/auth/logout` isteklerinin
+    - Production ortamında `/auth/refresh`, `/auth/logout`, `/auth/password` ve
+      session silme isteklerinin
       `Origin` başlığı `FRONTEND_ORIGIN` ile bire bir aynı olmalıdır. Diğer
       ortamlarda bu Origin kontrolü uygulanmaz.
-    - Register, login, refresh ve me cevapları `Cache-Control: no-store` taşır.
+    - Register, login, refresh, me, session listesi ve profil güncelleme
+      cevapları `Cache-Control: no-store` taşır.
 
     Güvenlik response header'ları tüm HTTP cevaplarında Helmet 8.3.0'ın
     varsayılan politikalarıyla üretilir. Bunlar arasında
@@ -34,7 +36,8 @@ info:
     Rate limit politikaları süreç içindeki ayrı bellek depolarında tutulur ve
     süreç yeniden başladığında sıfırlanır. Login `10/15 dakika/IP`, register
     `5/60 dakika/IP`, refresh `30/5 dakika/IP`, kullanıcı arama
-    `60/dakika/kullanıcı` ve mesaj oluşturma `60/dakika/kullanıcı` sınırındadır.
+    `60/dakika/kullanıcı`, parola değiştirme `10/15 dakika/kullanıcı` ve mesaj
+    oluşturma `60/dakika/kullanıcı` sınırındadır.
     IP kapsamı Express `request.ip` değeridir; uygulama `trust proxy` açmadığı
     için doğrudan TCP eşini temsil eder. Paylaşımlı NAT/CGNAT kullanıcıları aynı
     login/register/refresh kotasını tüketebilir. Limit aşımında standart hata
@@ -51,9 +54,9 @@ tags:
   - name: Health
     description: Liveness ve PostgreSQL readiness kontrolleri.
   - name: Auth
-    description: Kayıt, oturum, token rotasyonu ve mevcut kullanıcı.
+    description: Kayıt, parola, session yönetimi, token rotasyonu ve mevcut kullanıcı.
   - name: Users
-    description: Aktif kullanıcı arama.
+    description: Profil güncelleme ve aktif kullanıcı arama.
   - name: Conversations
     description: Doğrudan konuşma oluşturma, listeleme ve detay.
   - name: Messages
@@ -370,6 +373,181 @@ paths:
                   createdAt: "2030-01-01T00:00:00.000Z"
         "401":
           $ref: "#/components/responses/BearerUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/password:
+    patch:
+      tags: [Auth]
+      summary: Mevcut parolayı değiştirme
+      operationId: changePassword
+      description: |
+        Mevcut parolayı doğrular, yeni parolayı register ile aynı kurala göre
+        kaydeder ve mevcut session dışındaki tüm session'ları iptal eder.
+        Doğrulanmış kullanıcı başına 15 dakikada 10 istekle sınırlıdır.
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/http/middleware/rate-limit.ts
+        - src/modules/auth/auth.routes.ts
+        - src/modules/auth/auth.schema.ts
+        - src/modules/auth/auth.controller.ts
+        - src/modules/auth/auth.service.ts
+      parameters:
+        - $ref: "#/components/parameters/ProductionOrigin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "204":
+          description: Parola değiştirildi ve diğer session'lar iptal edildi; gövde yok
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          description: Bearer token geçersiz veya mevcut parola yanlış
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          $ref: "#/components/responses/CsrfError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/sessions:
+    get:
+      tags: [Auth]
+      summary: Aktif session'ları listeleme
+      operationId: listAuthSessions
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/auth/auth.routes.ts
+        - src/modules/auth/auth.controller.ts
+        - src/modules/auth/auth.service.ts
+        - src/modules/auth/sessions/auth-session.repository.ts
+      responses:
+        "200":
+          description: Süresi dolmamış ve iptal edilmemiş session'lar
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSessionListResponse"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Auth]
+      summary: Mevcut session dışındaki tüm session'ları iptal etme
+      operationId: revokeOtherAuthSessions
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/auth/auth.routes.ts
+        - src/modules/auth/auth.controller.ts
+        - src/modules/auth/auth.service.ts
+        - src/modules/auth/sessions/auth-session.repository.ts
+      parameters:
+        - $ref: "#/components/parameters/ProductionOrigin"
+      responses:
+        "204":
+          description: Diğer session'lar iptal edildi; gövde yok
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "403":
+          $ref: "#/components/responses/CsrfError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/sessions/{sessionId}:
+    delete:
+      tags: [Auth]
+      summary: Belirli bir session'ı iptal etme
+      operationId: revokeAuthSession
+      description: |
+        Session yalnızca doğrulanmış kullanıcıya aitse iptal edilir. Hedef mevcut
+        session ise refresh cookie de temizlenir. Başkasına ait veya zaten iptal
+        edilmiş bir kimlik bilgi sızdırmamak için yine 204 döner.
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/auth/auth.routes.ts
+        - src/modules/auth/auth.controller.ts
+        - src/modules/auth/auth.service.ts
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/ProductionOrigin"
+      responses:
+        "204":
+          description: İşlem tamamlandı; gövde yok
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "403":
+          $ref: "#/components/responses/CsrfError"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/me:
+    patch:
+      tags: [Users]
+      summary: Mevcut kullanıcının profilini güncelleme
+      operationId: updateCurrentUser
+      description: "`username` ve/veya `displayName` gönderilmelidir."
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/users/users.routes.ts
+        - src/modules/users/users.schema.ts
+        - src/modules/users/users.controller.ts
+        - src/modules/users/users.service.ts
+        - src/modules/users/users.repository.ts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCurrentUserRequest"
+      responses:
+        "200":
+          description: Güncellenmiş kullanıcı profili
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "409":
+          description: Kullanıcı adı zaten kullanımda
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: USERNAME_ALREADY_IN_USE
+                  message: The username is already in use
+                  requestId: 77777777-7777-4777-8777-777777777777
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1457,6 +1635,36 @@ components:
           format: password
           minLength: 1
           maxLength: 128
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          format: password
+          minLength: 1
+          maxLength: 128
+        newPassword:
+          type: string
+          format: password
+          minLength: 12
+          maxLength: 128
+    UpdateCurrentUserRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 32
+          description: Trim edilir ve tekil olmalıdır.
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Trim edilir.
     PublicUser:
       type: object
       additionalProperties: false
@@ -1517,6 +1725,37 @@ components:
       properties:
         user:
           $ref: "#/components/schemas/PublicUser"
+    AuthSession:
+      type: object
+      additionalProperties: false
+      required: [id, userAgent, createdAt, lastUsedAt, expiresAt, isCurrent]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userAgent:
+          type: [string, "null"]
+          description: Session oluşturulurken gelen User-Agent; eski session'larda null olabilir.
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        isCurrent:
+          type: boolean
+    AuthSessionListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuthSession"
     UserSearchResponse:
       type: object
       additionalProperties: false

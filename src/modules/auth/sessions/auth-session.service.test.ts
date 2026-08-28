@@ -15,7 +15,9 @@ import type {
   AuthSessionRepository,
   CreateAuthSessionData,
   FindActiveAuthSessionData,
+  ListActiveAuthSessionsData,
   RevokeAuthSessionData,
+  RevokeOtherAuthSessionsData,
   RotateRefreshTokenData,
 } from "./auth-session.types.js";
 
@@ -44,6 +46,7 @@ class InMemoryAuthSessionRepository implements AuthSessionRepository {
     const session: AuthSessionRecord = {
       id: data.id,
       userId: data.userId,
+      userAgent: data.userAgent,
       expiresAt: data.expiresAt,
       lastUsedAt: data.lastUsedAt,
       revokedAt: null,
@@ -118,7 +121,18 @@ class InMemoryAuthSessionRepository implements AuthSessionRepository {
     return true;
   }
 
-  async revokeSession(data: RevokeAuthSessionData): Promise<void> {
+  async listActiveSessions(
+    data: ListActiveAuthSessionsData,
+  ): Promise<readonly AuthSessionRecord[]> {
+    return [...this.sessions.values()].filter(
+      (session) =>
+        session.userId === data.userId &&
+        session.revokedAt === null &&
+        session.expiresAt.getTime() > data.now.getTime(),
+    );
+  }
+
+  async revokeSession(data: RevokeAuthSessionData): Promise<boolean> {
     const session = this.sessions.get(data.sessionId);
 
     if (
@@ -126,13 +140,37 @@ class InMemoryAuthSessionRepository implements AuthSessionRepository {
       session.userId !== data.userId ||
       session.revokedAt !== null
     ) {
-      return;
+      return false;
     }
 
     this.sessions.set(session.id, {
       ...session,
       revokedAt: data.revokedAt,
     });
+
+    return true;
+  }
+
+  async revokeOtherSessions(
+    data: RevokeOtherAuthSessionsData,
+  ): Promise<readonly string[]> {
+    const revokedIds: string[] = [];
+
+    for (const session of this.sessions.values()) {
+      if (
+        session.userId === data.userId &&
+        session.id !== data.currentSessionId &&
+        session.revokedAt === null
+      ) {
+        this.sessions.set(session.id, {
+          ...session,
+          revokedAt: data.revokedAt,
+        });
+        revokedIds.push(session.id);
+      }
+    }
+
+    return revokedIds;
   }
 
   async updateLastUsedAt(
@@ -211,6 +249,7 @@ function createSessionRecord(
   return {
     id: SESSION_ID,
     userId: USER_ID,
+    userAgent: null,
     expiresAt: new Date(NOW.getTime() + 60_000),
     lastUsedAt: NOW,
     revokedAt: null,
@@ -223,7 +262,10 @@ describe("auth session service", () => {
   it("stores only the refresh token hash when creating a session", async () => {
     const repository = new InMemoryAuthSessionRepository();
     const service = createService(repository);
-    const created = await service.createSession({ userId: USER_ID });
+    const created = await service.createSession({
+      userId: USER_ID,
+      userAgent: "Firefox test agent",
+    });
     const persisted = repository.lastCreatedData;
 
     expect(persisted).not.toBeNull();
@@ -236,6 +278,7 @@ describe("auth session service", () => {
       "sha256:rt_plaintext-test-token",
     );
     expect(persisted.refreshTokenHash).not.toBe(created.refreshToken);
+    expect(persisted.userAgent).toBe("Firefox test agent");
     expect(created.refreshToken).toBe("rt_plaintext-test-token");
     expect(created.sessionId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
@@ -364,5 +407,33 @@ describe("auth session service", () => {
     const rejectionReason: unknown = rejected[0]?.reason;
 
     expect(rejectionReason).toBeInstanceOf(InvalidRefreshTokenError);
+  });
+
+  it("lists only active sessions and revokes all except the current one", async () => {
+    const current = createSessionRecord();
+    const other = createSessionRecord({
+      id: "33333333-3333-4333-8333-333333333333",
+      userAgent: "Chrome",
+    });
+    const expired = createSessionRecord({
+      id: "44444444-4444-4444-8444-444444444444",
+      expiresAt: NOW,
+    });
+    const repository = new InMemoryAuthSessionRepository([
+      current,
+      other,
+      expired,
+    ]);
+    const service = createService(repository);
+
+    await expect(service.listActiveSessions(USER_ID)).resolves.toEqual([
+      current,
+      other,
+    ]);
+    await expect(
+      service.revokeOtherSessions(USER_ID, current.id),
+    ).resolves.toEqual([other.id, expired.id]);
+    expect(repository.sessions.get(current.id)?.revokedAt).toBeNull();
+    expect(repository.sessions.get(other.id)?.revokedAt).toEqual(NOW);
   });
 });

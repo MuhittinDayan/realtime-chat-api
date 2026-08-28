@@ -1,12 +1,18 @@
 import { Router, type RequestHandler } from "express";
 
-import { withValidatedQuery } from "../../http/validation/request-validation.js";
+import {
+  withValidatedBody,
+  withValidatedQuery,
+} from "../../http/validation/request-validation.js";
 import { userSearchRateLimit } from "../../http/middleware/rate-limit.js";
 import { authService } from "../auth/auth-core.js";
 import { createAuthenticationMiddleware } from "../auth/auth.middleware.js";
 import { UsersController } from "./users.controller.js";
 import { PrismaUsersRepository } from "./users.repository.js";
-import { searchUsersQuerySchema } from "./users.schema.js";
+import {
+  searchUsersQuerySchema,
+  updateCurrentUserSchema,
+} from "./users.schema.js";
 import { UsersService } from "./users.service.js";
 
 export interface CreateUsersRouterOptions {
@@ -21,6 +27,10 @@ export function createUsersRouter(
   const router = Router();
 
   router.use(options.authenticationMiddleware);
+  router.patch(
+    "/me",
+    withValidatedBody(updateCurrentUserSchema, options.controller.updateMe),
+  );
   router.get(
     "/",
     options.searchRateLimitMiddleware ?? userSearchRateLimit,
