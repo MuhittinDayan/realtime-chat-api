@@ -37,7 +37,8 @@ info:
     süreç yeniden başladığında sıfırlanır. Login `10/15 dakika/IP`, register
     `5/60 dakika/IP`, refresh `30/5 dakika/IP`, kullanıcı arama
     `60/dakika/kullanıcı`, parola değiştirme `10/15 dakika/kullanıcı` ve mesaj
-    oluşturma `60/dakika/kullanıcı` sınırındadır.
+    oluşturma `60/dakika/kullanıcı`; avatar upload intent + complete işlemleri
+    ortak `20/15 dakika/kullanıcı` sınırındadır.
     IP kapsamı Express `request.ip` değeridir; uygulama `trust proxy` açmadığı
     için doğrudan TCP eşini temsil eder. Paylaşımlı NAT/CGNAT kullanıcıları aynı
     login/register/refresh kotasını tüketebilir. Limit aşımında standart hata
@@ -548,6 +549,188 @@ paths:
                   code: USERNAME_ALREADY_IN_USE
                   message: The username is already in use
                   requestId: 77777777-7777-4777-8777-777777777777
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/me/avatar/uploads:
+    post:
+      tags: [Users]
+      summary: Avatar için doğrudan object-storage yükleme adresi oluşturma
+      operationId: createAvatarUpload
+      description: |
+        İstemci dosyayı API gövdesine göndermez. Bu uçtan alınan imzalı URL'ye
+        dönen `Content-Type` başlığıyla `PUT` yapar, ardından complete ucunu çağırır.
+        Upload intent ve complete aynı kullanıcı bazlı `20/15 dakika` kotasını tüketir.
+        JPEG, PNG ve WebP kabul edilir; HEIC/HEIF, SVG, GIF ve video kabul edilmez.
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/users/users.routes.ts
+        - src/modules/media/avatar.schema.ts
+        - src/modules/media/avatar.controller.ts
+        - src/modules/media/avatar.service.ts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAvatarUploadRequest"
+            example:
+              contentType: image/jpeg
+              contentLength: 245760
+      responses:
+        "201":
+          description: On dakika geçerli, Content-Type'a bağlı imzalı PUT adresi
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvatarUploadIntent"
+        "400":
+          description: Gövde doğrulama hatası veya desteklenmeyen format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                validation:
+                  $ref: "#/components/examples/ValidationErrorExample"
+                unsupportedFormat:
+                  value:
+                    error:
+                      code: UNSUPPORTED_AVATAR_FORMAT
+                      message: Avatar format is not supported; use JPEG, PNG, or WebP
+                      requestId: 77777777-7777-4777-8777-777777777777
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/AvatarStorageUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/me/avatar/uploads/{uploadId}/complete:
+    post:
+      tags: [Users]
+      summary: Yüklenen avatarı doğrulama, dönüştürme ve profile bağlama
+      operationId: completeAvatarUpload
+      description: |
+        Private `incoming/` nesnesini okur; gerçek MIME, byte boyutu ve görseli
+        doğrular. En fazla 5 MiB ve 4096×4096 kaynak kabul edilir. Sonuç metadata'sı
+        temizlenmiş sabit 512×512 WebP olarak public `public/` prefix'ine yazılır.
+        Aynı tamamlanmış güncel upload için retry idempotenttir.
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/users/users.routes.ts
+        - src/modules/media/avatar.controller.ts
+        - src/modules/media/avatar.service.ts
+        - src/modules/media/avatar-image.processor.ts
+      parameters:
+        - name: uploadId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Avatar profile bağlandı; güncel kullanıcı döndü
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          description: Upload bulunamadı veya bu kullanıcıya ait değil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: AVATAR_UPLOAD_NOT_FOUND
+                  message: The avatar upload was not found
+                  requestId: 77777777-7777-4777-8777-777777777777
+        "409":
+          description: Upload süresi doldu, henüz object storage'a ulaşmadı veya tamamlanamaz durumda
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                incomplete:
+                  value:
+                    error:
+                      code: AVATAR_UPLOAD_INCOMPLETE
+                      message: The avatar upload has not completed
+                      requestId: 77777777-7777-4777-8777-777777777777
+                expired:
+                  value:
+                    error:
+                      code: AVATAR_UPLOAD_EXPIRED
+                      message: The avatar upload has expired
+                      requestId: 77777777-7777-4777-8777-777777777777
+                conflict:
+                  value:
+                    error:
+                      code: AVATAR_UPLOAD_CONFLICT
+                      message: The avatar upload cannot be completed
+                      requestId: 77777777-7777-4777-8777-777777777777
+        "422":
+          description: Nesne bildirilen dosyayla eşleşmedi veya güvenli biçimde çözümlenemedi
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error:
+                  code: INVALID_AVATAR_FILE
+                  message: The uploaded file is not a valid supported avatar image
+                  requestId: 77777777-7777-4777-8777-777777777777
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/AvatarStorageUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/users/me/avatar:
+    delete:
+      tags: [Users]
+      summary: Mevcut avatar referansını kaldırma
+      operationId: deleteCurrentUserAvatar
+      description: |
+        Kullanıcının `avatarUrl` ve güncel media ilişkisini hemen temizler.
+        Object storage nesnesi istek içinde silinmez; periyodik temizlik tarafından kaldırılır.
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/users/users.routes.ts
+        - src/modules/media/avatar.controller.ts
+        - src/modules/media/avatar.service.ts
+        - src/modules/media/avatar-cleanup.service.ts
+      responses:
+        "200":
+          description: Avatarı kaldırılmış güncel kullanıcı
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserResponse"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1407,6 +1590,17 @@ components:
       example: 60
 
   responses:
+    AvatarStorageUnavailable:
+      description: Object storage geçici olarak kullanılamıyor
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: AVATAR_STORAGE_UNAVAILABLE
+              message: Avatar storage is temporarily unavailable
+              requestId: 77777777-7777-4777-8777-777777777777
     InsufficientRole:
       description: Active member role does not permit the operation
       content:
@@ -1665,6 +1859,48 @@ components:
           minLength: 1
           maxLength: 80
           description: Trim edilir.
+    CreateAvatarUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [contentType, contentLength]
+      properties:
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+          description: İmzaya bağlanacak kaynak MIME türü.
+        contentLength:
+          type: integer
+          minimum: 1
+          maximum: 5242880
+          description: Kaynak nesnenin byte boyutu; complete aşamasında kesin doğrulanır.
+    AvatarUploadIntent:
+      type: object
+      additionalProperties: false
+      required: [uploadId, upload]
+      properties:
+        uploadId:
+          type: string
+          format: uuid
+        upload:
+          type: object
+          additionalProperties: false
+          required: [url, method, headers, expiresAt]
+          properties:
+            url:
+              type: string
+              format: uri
+              description: Private incoming nesnesine ait, on dakika geçerli imzalı URL.
+            method:
+              type: string
+              const: PUT
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+              description: PUT sırasında aynen gönderilmelidir; Content-Type imzaya dahildir.
+            expiresAt:
+              type: string
+              format: date-time
     PublicUser:
       type: object
       additionalProperties: false

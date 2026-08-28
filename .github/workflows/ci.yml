@@ -39,11 +39,12 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Start PostgreSQL and apply test migrations
+      - name: Start PostgreSQL and MinIO, then apply test migrations
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/chat_test
         run: |
-          docker compose up -d --wait postgres
+          docker compose up -d --wait postgres minio
+          npm run setup:storage
           docker compose exec -T postgres createdb -U postgres chat_test
           npm run prisma:migrate:deploy
 
@@ -61,10 +62,10 @@ jobs:
           path: coverage/
           if-no-files-found: ignore
 
-      - name: Show PostgreSQL logs on failure
+      - name: Show service logs on failure
         if: failure()
-        run: docker compose logs postgres
+        run: docker compose logs postgres minio
 
-      - name: Stop PostgreSQL
+      - name: Stop local services
         if: always()
         run: docker compose down -v

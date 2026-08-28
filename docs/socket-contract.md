@@ -178,6 +178,10 @@ Payload yoktur. Session parola değişikliği, belirli session'ı silme, diğer 
 
 Mevcut session açık bırakılarak diğer session'lar iptal edildiğinde yalnızca hedef session odalarındaki socket'ler kapanır. Aynı kullanıcının mevcut cihazdaki socket'i bağlı kalır. Kaynaklar: `src/realtime/auth/session-revocation-publisher.ts`, `src/realtime/server/configure-chat-namespace.ts`; test: `src/realtime/server/chat.integration.test.ts`.
 
+### Avatar değişiklikleri için event yoktur
+
+Faz 14a avatar yükleme, değiştirme veya kaldırma işlemi yeni bir Socket.IO event'i yayınlamaz. İsteği yapan istemci complete/delete HTTP cevabındaki güncel `user.avatarUrl` değerini yerel durumuna uygulamalıdır. Diğer istemciler ve konuşma üyeleri yeni avatar URL'sini bir sonraki kullanıcı/konuşma sorgusunda veya avatar alanı taşıyan daha sonraki mevcut event payload'ında görür. Public avatar URL'leri içerik başına benzersizdir; aynı URL'nin içeriği değiştirilmez.
+
 ```ts
 {
   userId: string;     // UUID

@@ -210,6 +210,141 @@ Belirli bir session `DELETE /api/v1/auth/sessions/{sessionId}`, mevcut dışınd
 
 Dolayısıyla frontend "JWT doğal süresi dolana kadar HTTP çalışır" varsayımını kullanmamalıdır. `auth:revoked` alındığında yerel access token temizlenmeli ve yeniden giriş akışı başlatılmalıdır. Kaynaklar: `src/modules/auth/auth.service.ts`, `src/modules/auth/sessions/auth-session.repository.ts`, `src/realtime/auth/session-revocation-publisher.ts`; gerçek PostgreSQL testi: `src/modules/auth/auth.postgres.integration.test.ts`; socket testi: `src/realtime/server/chat.integration.test.ts`.
 
+## B.2. Avatar yükleme
+
+Avatar, API'ye multipart/base64 olarak gönderilmez. Akış üç adımdır: backend'den private upload adresi al, dosyayı doğrudan object storage'a `PUT` et, backend'e complete çağrısı yap. Upload intent ve complete çağrıları kullanıcı başına ortak `20/15 dakika` kotasını tüketir.
+
+1. Dosyanın MIME türü ve byte boyutuyla upload intent oluştur:
+
+   ```http
+   POST /api/v1/users/me/avatar/uploads HTTP/1.1
+   Authorization: Bearer <access-token>
+   Content-Type: application/json
+
+   {
+     "contentType": "image/jpeg",
+     "contentLength": 245760
+   }
+   ```
+
+2. Cevaptaki `upload.url`, `upload.method` ve `upload.headers` değerlerini aynen kullan. Özellikle `Content-Type` imzaya dahildir; intent'te `image/jpeg` denmişse PUT sırasında başka bir değer göndermek imzayı geçersiz kılar.
+
+   ```ts
+   const intent = await createAvatarUploadIntent(file.type, file.size);
+
+   await fetch(intent.upload.url, {
+     method: intent.upload.method,
+     headers: intent.upload.headers,
+     body: file,
+   });
+   ```
+
+   İmzalı adres 10 dakika geçerlidir. `incoming/` nesnesi public okunamaz; yalnızca tamamlanmış `public/` WebP nesnesi anonim okunabilir.
+
+3. PUT başarılı olduktan sonra aynı `uploadId` ile complete çağır:
+
+   ```http
+   POST /api/v1/users/me/avatar/uploads/22222222-2222-4222-8222-222222222222/complete HTTP/1.1
+   Authorization: Bearer <access-token>
+   ```
+
+Backend gerçek nesne boyutunu, MIME türünü ve çözümlenen görseli yeniden doğrular. Kaynak en fazla 5 MiB ve 4096×4096 olabilir. Başarılı görsel metadata'sı çıkarılarak merkezden kırpılmış sabit 512×512 WebP'ye dönüştürülür; cevap güncel `user.avatarUrl` değerini içerir. Aynı güncel upload'ın complete retry'ı idempotenttir.
+
+Desteklenen kaynaklar yalnızca JPEG, PNG ve WebP'dir. HEIC/HEIF özellikle Faz 14a MVP'sinde desteklenmez. iPhone galerisinden seçilen dosya HEIC ise frontend dosyayı istemci tarafında JPEG/WebP'ye dönüştürmeli veya kullanıcıya açık bir hata göstermelidir. Dönüştürmeden `image/heic` intent'i istenirse backend şu cevabı verir:
+
+```json
+{
+  "error": {
+    "code": "UNSUPPORTED_AVATAR_FORMAT",
+    "message": "Avatar format is not supported; use JPEG, PNG, or WebP",
+    "requestId": "77777777-7777-4777-8777-777777777777"
+  }
+}
+```
+
+SVG, GIF ve video da reddedilir.
+
+### Avatar hata sözleşmesi
+
+Faz 14a'daki gerçek hata adları aşağıdaki gibidir; `410 UPLOAD_EXPIRED`, `413 UPLOAD_TOO_LARGE` veya `422 UNSUPPORTED_IMAGE` kullanılmaz.
+
+| Durum | HTTP | `error.code` | Frontend davranışı |
+| --- | ---: | --- | --- |
+| Upload süresi doldu | 409 | `AVATAR_UPLOAD_EXPIRED` | Yeni upload intent oluştur |
+| Upload iptal edildi, başka durumda veya artık tamamlanamaz | 409 | `AVATAR_UPLOAD_CONFLICT` | Eski `uploadId`'yi bırakıp yeni intent oluştur |
+| PUT nesnesi henüz storage'da yok | 409 | `AVATAR_UPLOAD_INCOMPLETE` | PUT sonucunu kontrol et; kısa/geçici yarışta complete'i aynı ID ile tekrar deneyebilirsin |
+| HEAD/GET sırasında gerçek nesne 5 MiB üstünde, bildirilen boyut/MIME ile farklı veya decode edilemiyor | 422 | `INVALID_AVATAR_FILE` | Dosyayı düzelt/dönüştür ve yeni intent oluştur |
+| Intent sırasında desteklenmeyen MIME (`image/heic`, SVG, GIF vb.) | 400 | `UNSUPPORTED_AVATAR_FORMAT` | JPEG/PNG/WebP seç veya istemcide dönüştür |
+| Backend imzalı URL üretemedi ya da storage okuma/yazma geçici olarak başarısız | 503 | `AVATAR_STORAGE_UNAVAILABLE` | Gecikmeli retry göster |
+
+Süresi dolmuş upload:
+
+```json
+{
+  "error": {
+    "code": "AVATAR_UPLOAD_EXPIRED",
+    "message": "The avatar upload has expired",
+    "requestId": "77777777-7777-4777-8777-777777777777"
+  }
+}
+```
+
+İptal edilmiş veya geçersiz durumdaki upload:
+
+```json
+{
+  "error": {
+    "code": "AVATAR_UPLOAD_CONFLICT",
+    "message": "The avatar upload cannot be completed",
+    "requestId": "77777777-7777-4777-8777-777777777777"
+  }
+}
+```
+
+PUT nesnesi bulunamadığında:
+
+```json
+{
+  "error": {
+    "code": "AVATAR_UPLOAD_INCOMPLETE",
+    "message": "The avatar upload has not completed",
+    "requestId": "77777777-7777-4777-8777-777777777777"
+  }
+}
+```
+
+Boyut/MIME uyuşmazlığı, 5 MiB üstü gerçek nesne veya decode hatası:
+
+```json
+{
+  "error": {
+    "code": "INVALID_AVATAR_FILE",
+    "message": "The uploaded file is not a valid supported avatar image",
+    "requestId": "77777777-7777-4777-8777-777777777777"
+  }
+}
+```
+
+Backend storage'a erişemediğinde:
+
+```json
+{
+  "error": {
+    "code": "AVATAR_STORAGE_UNAVAILABLE",
+    "message": "Avatar storage is temporarily unavailable",
+    "requestId": "77777777-7777-4777-8777-777777777777"
+  }
+}
+```
+
+İmzalı PUT sırasında yanlış `Content-Type`, süresi geçmiş URL veya bozuk imza kullanılırsa cevap backend API'den değil doğrudan MinIO/S3/R2'den gelir. Bu durumda genel HTTP sonucu `403`'tür; provider'a göre JSON/XML gövdesi değişebildiğinden taşınabilir bir backend `error.code` değeri yoktur. Frontend PUT `2xx` dönmeden complete çağırmamalıdır. Başarısız PUT'tan sonra yine de complete çağrılır ve nesne oluşmamışsa backend `409 AVATAR_UPLOAD_INCOMPLETE` döndürür.
+
+Avatarı kaldırmak için `DELETE /api/v1/users/me/avatar` kullanılır. Profil referansı hemen temizlenir; eski avatar ve yarım upload nesneleri request sırasında senkron silinmez. Sunucudaki 15 dakikalık periyodik temizlik, bir saatten eski pending/rejected/cancelled kayıtları ve artık hiçbir kullanıcı tarafından referans verilmeyen avatarları kaldırır. Bu nedenle değiştirme/silme cevabından kısa bir süre sonra eski public URL geçici olarak çalışabilir. Public avatar çıktısının cache politikası `public, max-age=86400` olduğundan frontend eski URL'nin anında erişilemez olmasına güvenmemelidir; her yeni avatar benzersiz bir URL alır.
+
+Swagger ilk ve üçüncü API çağrılarını çalıştırabilir. Aradaki imzalı object-storage PUT isteği dinamik ve harici bir URL olduğu için Swagger operasyonu değildir; cevaptaki URL/header'lar kopyalanarak Thunder Client/curl ile veya frontend kodundan gönderilir. Yerelde MinIO ve iki bucket `npm run setup:local` ile hazırlanır; yalnızca storage'ı yeniden hazırlamak için `npm run setup:storage` kullanılabilir.
+
+Kaynaklar: `src/modules/media/avatar.service.ts`, `src/modules/media/avatar-image.processor.ts`, `src/modules/media/avatar-cleanup.service.ts`, `src/infrastructure/storage/`; gerçek PostgreSQL testi: `src/modules/media/avatar.postgres.integration.test.ts`.
+
 ## C. `POST .../messages` idempotent retry
 
 ### Kesin davranış

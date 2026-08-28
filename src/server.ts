@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { prisma } from "./infrastructure/database/prisma.js";
+import { avatarCleanupWorker } from "./modules/media/avatar-cleanup.worker.js";
 import { createSocketServer } from "./realtime/server/index.js";
 import { logger } from "./shared/logging/logger.js";
 
@@ -37,6 +38,7 @@ async function performShutdown(
   forceShutdownTimer.unref();
 
   try {
+    await avatarCleanupWorker.stop();
     await closeSocketServer();
     await prisma.$disconnect();
     process.exitCode = exitCode;
@@ -69,6 +71,7 @@ httpServer.once("error", (error) => {
 });
 
 httpServer.listen(env.PORT, "0.0.0.0", () => {
+  avatarCleanupWorker.start();
   logger.info(
     {
       port: env.PORT,

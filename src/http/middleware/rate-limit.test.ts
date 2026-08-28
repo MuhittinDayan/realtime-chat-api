@@ -35,6 +35,12 @@ describe("HTTP rate-limit policies", () => {
         limit: 60,
         scope: "user",
       },
+      avatarUpload: {
+        identifier: "avatar-upload",
+        windowMs: 15 * 60_000,
+        limit: 20,
+        scope: "user",
+      },
       messageCreate: {
         identifier: "message-create",
         windowMs: 60_000,

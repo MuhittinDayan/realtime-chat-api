@@ -41,6 +41,12 @@ export const httpRateLimitPolicies = Object.freeze({
     limit: 60,
     scope: "user",
   },
+  avatarUpload: {
+    identifier: "avatar-upload",
+    windowMs: 15 * MINUTE,
+    limit: 20,
+    scope: "user",
+  },
   messageCreate: {
     identifier: "message-create",
     windowMs: MINUTE,
@@ -99,6 +105,9 @@ export const passwordChangeRateLimit = createHttpRateLimiter(
 );
 export const userSearchRateLimit = createHttpRateLimiter(
   httpRateLimitPolicies.userSearch,
+);
+export const avatarUploadRateLimit = createHttpRateLimiter(
+  httpRateLimitPolicies.avatarUpload,
 );
 export const messageCreateRateLimit = createHttpRateLimiter(
   httpRateLimitPolicies.messageCreate,

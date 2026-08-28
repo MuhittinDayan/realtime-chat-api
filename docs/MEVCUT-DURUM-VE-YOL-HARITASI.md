@@ -12,9 +12,9 @@
 
 Proje, bire bir ve grup mesajlaşmasına yönelik backend MVP'sinin ana akışlarını tamamlamış durumda. Kullanıcı kaydı, profil/parola/session yönetimi, kullanıcı arama, DIRECT/GROUP konuşma yönetimi, mesaj gönderme, düzenleme, soft-delete ve geçmişi alma, okundu bilgisini ilerletme, Socket.IO üzerinden mesaj/okundu/typing/presence, grup yaşam döngüsü ve session iptali yayınları kodda mevcut. Kod tabanı modüler, TypeScript strict kuralları açık ve servis–repository ayrımı genel olarak temiz.
 
-FAZ 13a sonrasında 32 test dosyasındaki 202 testin tamamı geçti. Typecheck ve production build başarılı; mesaj/grup senaryolarına ek olarak parola değişiminin diğer session'ları iptal etmesi, iptal edilen session JWT'sinin HTTP'de anında reddi ve username tekillik davranışı migration uygulanmış PostgreSQL 17 üzerinde doğrulandı. Docker Compose tabanlı tek-komut yerel kurulum, OpenAPI/Socket.IO sözleşmeleri, development/test ortamında Swagger UI, coverage eşikleri, güvenlik sertleştirmesi ve seri GitHub Actions hattı mevcuttur. Mevcut seviye **“sözleşmesi belgelenmiş, güvenlik temelleri sertleştirilmiş, gerçek veritabanıyla doğrulanmış ve tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
+Faz 14a sonrasında 41 test dosyasındaki 240 testin tamamı geçti. Typecheck ve production build başarılı; auth/mesaj/grup senaryolarına ek olarak avatar media ilişkisinin PostgreSQL davranışı ve private MinIO kaynağının doğrulanıp public 512×512 WebP'ye dönüştürülmesi gerçek servislerle doğrulandı. Docker Compose tabanlı tek-komut PostgreSQL + MinIO kurulumu, OpenAPI/Socket.IO sözleşmeleri, development/test ortamında Swagger UI, coverage eşikleri, güvenlik sertleştirmesi ve seri GitHub Actions hattı mevcuttur. Mevcut seviye **“sözleşmesi belgelenmiş, güvenlik temelleri sertleştirilmiş, gerçek veritabanı ve object storage ile doğrulanmış, tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
 
-Bir sonraki backend adımı ürün önceliğine göre avatar/dosya yükleme, e-posta doğrulama/parola sıfırlama veya çoklu instance güvenilirliği arasından seçilmelidir.
+Faz 14a ile S3/R2 uyumlu object-storage temeli ve avatar yaşam döngüsü tamamlandı. Bir sonraki backend adımı ürün önceliğine göre private mesaj görseli/belge ekleri (Faz 14b/14c), e-posta doğrulama/parola sıfırlama veya çoklu instance güvenilirliği arasından seçilmelidir.
 
 ## 2. Teknoloji ve mimari özeti
 
@@ -26,6 +26,8 @@ Bir sonraki backend adımı ürün önceliğine göre avatar/dosya yükleme, e-p
 | Gerçek zamanlı iletişim | Socket.IO, `/chat` namespace'i |
 | Veritabanı | PostgreSQL |
 | ORM / migration | Prisma 7.9.1 ve PostgreSQL adapter'ı |
+| Nesne depolama | S3/R2 uyumlu katman; yerelde MinIO ve ayrı public-avatar/private-attachment bucket'ları |
+| Görsel işleme | Sharp ile doğrulama, metadata temizleme ve sabit 512×512 WebP üretimi |
 | Kimlik doğrulama | Kısa ömürlü JWT access token + döndürülen opaque refresh token |
 | Parola güvenliği | Argon2id |
 | Girdi doğrulama | Zod |
@@ -69,6 +71,9 @@ Mesaj / okundu değişikliği
 | `DELETE /api/v1/auth/sessions` | Hazır | Mevcut dışındaki tüm session'ları iptal etme |
 | `DELETE /api/v1/auth/sessions/:sessionId` | Hazır | Belirli bir session'ı iptal etme |
 | `PATCH /api/v1/users/me` | Hazır | Username/görünen ad profilini güncelleme |
+| `POST /api/v1/users/me/avatar/uploads` | Hazır | Private incoming prefix'i için 10 dakikalık imzalı PUT adresi oluşturma |
+| `POST /api/v1/users/me/avatar/uploads/:uploadId/complete` | Hazır | Kaynağı doğrulama, 512×512 WebP üretme ve profile bağlama |
+| `DELETE /api/v1/users/me/avatar` | Hazır | Avatar referansını kaldırma; nesneyi periyodik temizliğe bırakma |
 | `GET /api/v1/users` | Hazır | Kullanıcı adı / görünen ad ile cursor tabanlı arama |
 | `POST /api/v1/conversations/direct` | Hazır | Tekrarlı ve yarışan isteklerde aynı doğrudan konuşmayı döndürme |
 | `POST /api/v1/conversations/group` | Hazır | En az üç üyeli grup oluşturma; oluşturanı OWNER yapma |
@@ -125,6 +130,7 @@ Mevcut ana tablolar:
 - `messages`: metin mesajı, istemci mesaj kimliği, düzenlenme/silinme alanları
 - `message_reads`: kullanıcı başına monoton ilerleyen okundu watermark'ı
 - `auth_sessions`: hash'lenmiş refresh token, nullable user-agent, süre ve iptal bilgisi
+- `media_assets`: avatar upload amacı/durumu, private incoming ve public-ready object anahtarları, doğrulanan boyut/MIME/ölçüler ve kullanıcı ilişkisi
 
 Doğrudan konuşma anahtarı ile konuşma tekilleştirilmiş; mesajlarda `(senderId, clientMessageId)` tekilliği ile istemci retry'ları idempotent hale getirilmiştir. Listeleme sorgularında offset yerine keyset/cursor sayfalama kullanılmıştır.
 
@@ -136,22 +142,22 @@ Doğrudan konuşma anahtarı ile konuşma tekilleştirilmiş; mesajlarda `(sende
 | --- | --- |
 | `npm audit --omit=dev` | Başarılı — 0 production açığı |
 | `prisma generate` + `prisma validate` | Başarılı |
-| `npm test` | Başarılı — 32 dosya, 202/202 test |
+| `npm test` | Başarılı — 41 dosya, 240/240 test |
 | `npm run typecheck` | Başarılı |
 | `npm run build` | Başarılı |
-| `npm test -- --coverage` | Başarılı — statement %84,35; branch %72,78; function %86,95; line %86,83 |
-| `npm run setup:local` | Başarılı — PostgreSQL 17, `chat` + `chat_test`, migration ve seed |
+| `npm test -- --coverage` | Başarılı — statement %84,79; branch %73,67; function %87,41; line %86,86 |
+| `npm run setup:local` | Başarılı — PostgreSQL 17, MinIO, iki bucket/policy, `chat` + `chat_test`, migration ve seed |
 
 Not: Typecheck ve build komutlarının ikisi de `prisma generate` çalıştırıyor. Bunlar aynı çalışma dizininde paralel başlatıldığında Windows üzerinde üretilen klasöre eşzamanlı erişim nedeniyle geçici `EPERM` oluşabiliyor. Seri çalıştırıldıklarında ikisi de başarılıdır. CI hattı ya kontrolleri seri çalıştırmalı ya da Prisma Client'ı tek bir hazırlık adımında üretmelidir.
 
-Test kapsamının güçlü tarafları auth/session yarış koşulları, doğrudan konuşma tekilleştirme, mesaj idempotency ve yaşam döngüsü, keyset pagination, monoton okundu bilgisi, yetki kontrolleri ve Socket.IO yayın davranışlarıdır. Kritik sözleşme senaryoları ayrıca `src/contracts/backend-contract.integration.test.ts` içinde gerçek PostgreSQL'e karşı çalışır. Vitest line, function, branch ve statement alanlarının her biri için %70 coverage eşiği uygular.
+Test kapsamının güçlü tarafları auth/session yarış koşulları, doğrudan konuşma tekilleştirme, mesaj idempotency ve yaşam döngüsü, avatar boyut/MIME/görsel doğrulaması ile artık-nesne temizliği, keyset pagination, monoton okundu bilgisi, yetki kontrolleri ve Socket.IO yayın davranışlarıdır. Kritik sözleşme senaryoları `src/contracts/backend-contract.integration.test.ts`, avatar ilişkisi `src/modules/media/avatar.postgres.integration.test.ts`, gerçek MinIO akışı ise `src/modules/media/avatar.storage.integration.test.ts` içinde doğrulanır. Vitest line, function, branch ve statement alanlarının her biri için %70 coverage eşiği uygular.
 
 ## 5. Klasör yapısı
 
 ```text
 realtime-chat-api/
 ├─ .github/workflows/
-│  └─ ci.yml                            # Seri kalite ve PostgreSQL CI hattı
+│  └─ ci.yml                            # Seri kalite, PostgreSQL ve MinIO CI hattı
 ├─ docs/
 │  ├─ auth-security.md                 # Cookie, origin ve CSRF varsayımları
 │  ├─ integration-examples.md          # Frontend için doğrulanmış akışlar
@@ -172,10 +178,12 @@ realtime-chat-api/
 │  │  ├─ types/                        # Express tip genişletmeleri
 │  │  └─ validation/                   # Ortak request doğrulama yardımcıları
 │  ├─ infrastructure/
-│  │  └─ database/                     # Prisma client yaşam döngüsü
+│  │  ├─ database/                     # Prisma client yaşam döngüsü
+│  │  └─ storage/                      # S3/R2 adapter, imzalı PUT ve bucket hazırlığı
 │  ├─ modules/
 │  │  ├─ auth/                         # JWT, parola, cookie ve session yönetimi
 │  │  ├─ conversations/                # Doğrudan konuşma iş kuralları
+│  │  ├─ media/                        # Avatar upload, işleme ve periyodik temizlik
 │  │  ├─ messages/                     # Mesaj oluşturma, düzenleme, soft-delete ve geçmiş
 │  │  ├─ reads/                        # Okundu watermark'ı
 │  │  └─ users/                        # Kullanıcı arama
@@ -193,7 +201,7 @@ realtime-chat-api/
 ├─ scripts/
 │  └─ setup-local.mjs                  # Tek-komut Compose/migration/seed kurulumu
 ├─ .env.example                        # Örnek ortam değişkenleri
-├─ docker-compose.yml                  # PostgreSQL 17 yerel altyapısı
+├─ docker-compose.yml                  # PostgreSQL 17 + MinIO yerel altyapısı
 ├─ package.json                        # Script ve bağımlılıklar
 ├─ prisma.config.ts                    # Prisma yapılandırması
 ├─ tsconfig*.json                      # Typecheck/build ayarları
@@ -207,8 +215,8 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 ### Ürün kapsamı
 
 - Mesaj düzenleme ve soft-delete DIRECT ve GROUP konuşmalarında gönderen yetkisiyle desteklenir; grup yöneticisinin başka kullanıcının mesajını silmesi kapsam dışıdır.
-- Username/görünen ad profil güncellemesi, parola değiştirme, aktif session listesi, belirli session'ı ve mevcut dışındaki tüm session'ları iptal etme hazırdır. Avatar yükleme, parola sıfırlama ve e-posta doğrulama kapsam dışıdır.
-- Dosya/görsel eki, mesaj arama, bildirim, engelleme/raporlama ve moderasyon kapsam dışında.
+- Username/görünen ad profil güncellemesi, avatar yükleme/silme, parola değiştirme, aktif session listesi, belirli session'ı ve mevcut dışındaki tüm session'ları iptal etme hazırdır. Parola sıfırlama ve e-posta doğrulama kapsam dışıdır.
+- Mesaj görseli/belge eki için private attachment bucket altyapısı hazırdır; attachment veri modeli ve konuşma üyeliğine bağlı indirme sözleşmesi Faz 14b/14c kapsamındadır. Mesaj arama, bildirim, engelleme/raporlama ve moderasyon kapsam dışındadır.
 
 ### Ölçek ve güvenilirlik
 
@@ -217,9 +225,14 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 - Veritabanı commit'inden sonra Socket.IO'ya doğrudan yayın yapılıyor. Süreç çökmesi veya publisher hatasında kayıt kalıcı olup event kaybolabilir; outbox/retry mekanizması yok.
 - HTTP mesaj oluşturma ve Socket.IO `typing:set` için süreç içi rate limit vardır; dağıtık kota, genel backpressure ve yük testi henüz yoktur.
 
+### Faz 14a storage kararları ve bilinen sınırlamalar
+
+- R2 uyumlu presigned PUT akışında `Content-Type` imzaya bağlanır; ancak 5 MiB sınırı ingress sırasında `content-length-range` politikasıyla zorlanamaz. Bu nedenle kötü/bozuk bir istemci daha büyük private `incoming/` nesnesini storage'a göndermiş olabilir. Backend complete aşamasında önce HEAD ile gerçek boyutu kontrol eder, ardından indirmeyi 5 MiB + 1 byte ile sınırlar ve aşımı `422 INVALID_AVATAR_FILE` olarak reddeder; stale nesne periyodik temizlikle kaldırılır. Bu yaklaşım uygulama belleğini korur fakat storage'a ulaşmış ingress trafiğini ve geçici nesne maliyetini geri alamaz. İleride ingress'te kesin sınır gerekirse upload proxy/edge kuralı veya sağlayıcıya özgü doğrulanmış bir mekanizma ayrıca tasarlanmalıdır.
+- Avatar upload intent ve complete uçları kullanıcı başına ortak `20 istek / 15 dakika` kotası kullanır. Normal bir avatar değişimi iki istek tükettiği için bu değer yaklaşık 10 tam değişime izin verir; kullanıcı hatalarına tolerans bırakırken kötüye kullanımı sınırlar. Sayı Faz 14a kapsamında 28 Ağustos 2026'da bu gerekçeyle onaylanmıştır.
+
 ### Teslimat ve operasyon
 
-- Yerel PostgreSQL için Compose vardır; API image'ı oluşturacak Dockerfile henüz yoktur.
+- Yerel PostgreSQL ve MinIO için Compose vardır; API image'ı oluşturacak Dockerfile henüz yoktur.
 - GitHub Actions CI ve coverage eşikleri vardır; lint/format standardı henüz tanımlı değildir.
 - OpenAPI, Socket.IO sözleşmesi ve frontend entegrasyon örnekleri `docs/` altında mevcuttur.
 - Metrik, tracing, hata takip sistemi ve alarm tanımları yok; şu an temel yapılandırılmış loglar ve health endpoint'leri var.
@@ -236,7 +249,7 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 
 ### P0 — Tekrarlanabilir ve güvenilir geliştirme tabanı
 
-1. **Tamamlandı — Yerel altyapı.** PostgreSQL 17, healthcheck, named volume, migration, test DB ve seed tek komutla hazırlanıyor.
+1. **Tamamlandı — Yerel altyapı.** PostgreSQL 17 ile MinIO, healthcheck'ler, named volume'lar, public-avatar/private-attachment bucket politikaları, migration, test DB ve seed tek komutla hazırlanıyor.
 2. **Tamamlandı — Gerçek DB sözleşme testleri.** Beş kritik frontend/backend davranışı PostgreSQL üzerinde doğrulanıyor.
 3. **Büyük ölçüde tamamlandı — CI kalite kapısı.** `npm ci`, tek generate, typecheck, DB migration, coverage'lı test ve build seri çalışıyor. Lint/format henüz yok.
 4. **Tamamlandı — API sözleşmesi.** OpenAPI, Socket.IO sözleşmesi ve entegrasyon örnekleri yayınlandı.
@@ -248,7 +261,7 @@ P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritaba
 
 1. **Tamamlandı — Grup konuşmaları MVP.** Oluşturma, başlık, üye yaşam döngüsü, rol matrisi, sahiplik devri, 100 aktif üye sınırı ve GROUP socket event'leri eklendi.
 2. **Tamamlandı — Mesaj yaşam döngüsü.** Gönderen için düzenleme, idempotent soft-delete, tombstone gösterimi ve `message:updated` / `message:deleted` event'leri eklendi.
-3. **Kısmen tamamlandı — Profil yönetimi.** Username/görünen ad güncellemesi hazırdır; avatar/dosya yükleme Faz 14'e bırakılmıştır.
+3. **Tamamlandı — Profil ve avatar yönetimi (Faz 14a).** Username/görünen ad güncellemesi ile private incoming upload, güvenli görsel doğrulama/dönüştürme, public avatar URL'si, kaldırma ve periyodik artık-nesne temizliği hazırdır. Mesaj ekleri ayrı Faz 14b/14c kapsamındadır.
 4. **Kısmen tamamlandı — Hesap ve session yönetimi.** Parola değiştirme, aktif session listesi, belirli session'ı ve diğer session'ları iptal etme hazırdır; e-posta doğrulama ve parola sıfırlama e-posta sağlayıcısı kararıyla sonraki faza bırakılmıştır.
 5. Backend sözleşme testlerinde reconnect sonrası yeniden abonelik, token refresh, idempotent retry, cursor pagination ve typing timeout davranışlarını doğrula; frontend geliştiricisine örnek istek/event akışlarını sağla. Frontend uygulama kodu bu backend planının kapsamı dışındadır.
 
@@ -288,7 +301,7 @@ Geliştirmeye başlamadan önce aşağıdaki ürün/altyapı kararları netleşt
 - Grup konuşmaları production kapsamına dahildir; istemci tarafında OWNER/ADMIN yönetim ekranlarının hangi sürümde açılacağı netleştirilmelidir.
 - Tek instance ile başlanacaksa beklenen eşzamanlı socket ve mesaj hacmi nedir; çoklu instance hangi eşikte zorunlu olacak?
 - Frontend ve API aynı site altındaki farklı subdomain'lerde mi kalacak? Bu karar cookie/CSRF tasarımını etkiler.
-- Medya ekleri ilk sürüme dahil mi; dahilse hangi object storage ve virüs tarama akışı kullanılacak?
+- Mesaj ekleri için S3/R2 uyumlu private bucket kararı hazırdır; Faz 14b/14c'de izin verilen türler, konuşma üyeliğine bağlı presigned GET ve belge virüs tarama akışı kesinleştirilmelidir.
 - Soft-delete edilen mesajların DB body’si için production saklama/anonymization süresi ne olmalıdır?
 - Production hedefi nedir: tek sunucu, container platformu veya yönetilen bir servis mi?
 

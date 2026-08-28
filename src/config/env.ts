@@ -40,6 +40,35 @@ const originSchema = z
   )
   .transform((value) => new URL(value).origin);
 
+const httpUrlSchema = z
+  .string()
+  .url()
+  .refine((value) => {
+    const url = new URL(value);
+
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === ""
+    );
+  }, "Must be an HTTP(S) URL without credentials, query, or fragment")
+  .transform((value) => value.replace(/\/$/u, ""));
+
+const bucketNameSchema = z
+  .string()
+  .min(3)
+  .max(63)
+  .regex(
+    /^[a-z0-9][a-z0-9.-]*[a-z0-9]$/u,
+    "Must be a valid lowercase S3 bucket name",
+  );
+
+const booleanStringSchema = z
+  .enum(["true", "false"])
+  .transform((value) => value === "true");
+
 const environmentSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]),
   PORT: z.coerce.number().int().min(1).max(65_535).default(4_000),
@@ -68,7 +97,43 @@ const environmentSchema = z.object({
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
-});
+  STORAGE_ENDPOINT: httpUrlSchema.optional(),
+  STORAGE_REGION: z.string().trim().min(1).default("us-east-1"),
+  STORAGE_ACCESS_KEY_ID: z.string().trim().min(1),
+  STORAGE_SECRET_ACCESS_KEY: z.string().min(1),
+  STORAGE_FORCE_PATH_STYLE: booleanStringSchema.default(false),
+  STORAGE_AVATAR_BUCKET: bucketNameSchema,
+  STORAGE_ATTACHMENT_BUCKET: bucketNameSchema,
+  STORAGE_PUBLIC_BASE_URL: httpUrlSchema,
+  AVATAR_UPLOAD_URL_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(3_600)
+    .default(600),
+  MEDIA_CLEANUP_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(900_000),
+  MEDIA_STALE_UPLOAD_AGE_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(3_600_000),
+  AVATAR_CACHE_CONTROL: z
+    .string()
+    .trim()
+    .min(1)
+    .default("public, max-age=86400"),
+})
+  .refine(
+    (value) => value.STORAGE_AVATAR_BUCKET !== value.STORAGE_ATTACHMENT_BUCKET,
+    {
+      path: ["STORAGE_ATTACHMENT_BUCKET"],
+      message: "Must be different from STORAGE_AVATAR_BUCKET",
+    },
+  );
 
 const result = environmentSchema.safeParse(process.env);
 

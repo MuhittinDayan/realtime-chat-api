@@ -39,6 +39,22 @@ enum MessageKind {
   @@map("message_kind")
 }
 
+enum MediaPurpose {
+  AVATAR
+
+  @@map("media_purpose")
+}
+
+enum MediaStatus {
+  PENDING
+  PROCESSING
+  READY
+  REJECTED
+  CANCELLED
+
+  @@map("media_status")
+}
+
 model User {
   id           String     @id @default(uuid()) @db.Uuid
   email        String     @unique(map: "users_email_key") @db.VarChar(320)
@@ -46,6 +62,7 @@ model User {
   displayName  String     @map("display_name") @db.VarChar(80)
   passwordHash String     @map("password_hash") @db.VarChar(255)
   avatarUrl    String?    @map("avatar_url") @db.Text
+  avatarAssetId String?    @unique(map: "users_avatar_asset_id_key") @map("avatar_asset_id") @db.Uuid
   status       UserStatus @default(ACTIVE)
   lastSeenAt   DateTime?  @map("last_seen_at") @db.Timestamptz(3)
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -57,8 +74,37 @@ model User {
   messages             Message[]
   messageReads         MessageRead[]
   authSessions         AuthSession[]
+  ownedMediaAssets     MediaAsset[]          @relation("MediaAssetOwner")
+  avatarAsset          MediaAsset?           @relation("CurrentAvatar", fields: [avatarAssetId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@map("users")
+}
+
+model MediaAsset {
+  id                  String       @id @default(uuid()) @db.Uuid
+  ownerId             String       @map("owner_id") @db.Uuid
+  purpose             MediaPurpose @default(AVATAR)
+  status              MediaStatus  @default(PENDING)
+  declaredContentType String       @map("declared_content_type") @db.VarChar(64)
+  declaredSize        Int          @map("declared_size")
+  detectedContentType String?      @map("detected_content_type") @db.VarChar(64)
+  actualSize          Int?         @map("actual_size")
+  width               Int?
+  height              Int?
+  incomingObjectKey   String?      @unique(map: "media_assets_incoming_object_key_key") @map("incoming_object_key") @db.Text
+  readyObjectKey      String?      @unique(map: "media_assets_ready_object_key_key") @map("ready_object_key") @db.Text
+  publicUrl           String?      @unique(map: "media_assets_public_url_key") @map("public_url") @db.Text
+  uploadExpiresAt     DateTime     @map("upload_expires_at") @db.Timestamptz(3)
+  readyAt             DateTime?    @map("ready_at") @db.Timestamptz(3)
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  owner     User  @relation("MediaAssetOwner", fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  avatarFor User? @relation("CurrentAvatar")
+
+  @@index([ownerId, purpose, status, createdAt], map: "media_assets_owner_id_purpose_status_created_at_idx")
+  @@index([status, uploadExpiresAt], map: "media_assets_status_upload_expires_at_idx")
+  @@map("media_assets")
 }
 
 model Conversation {
