@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { decodeCursor } from "../../shared/pagination/cursor.js";
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "../attachments/attachment.constants.js";
 
 export interface MessageHistoryCursor {
   createdAt: Date;
@@ -40,7 +41,7 @@ const historyCursorSchema = z
     return z.NEVER;
   });
 
-export const createMessageBodySchema = z
+const createTextMessageBodySchema = z
   .object({
     clientMessageId: z.string().uuid(),
     content: z
@@ -52,7 +53,31 @@ export const createMessageBodySchema = z
   })
   .strict();
 
-export const updateMessageBodySchema = z
+const createMediaMessageBodySchema = z
+  .object({
+    clientMessageId: z.string().uuid(),
+    content: z
+      .object({
+        type: z.literal("media"),
+        text: z.string().trim().min(1).max(4_000).optional(),
+        attachmentIds: z
+          .array(z.string().uuid())
+          .min(1)
+          .max(MAX_ATTACHMENTS_PER_MESSAGE)
+          .refine((ids) => new Set(ids).size === ids.length, {
+            message: "Attachment ids must be unique",
+          }),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const createMessageBodySchema = z.union([
+  createTextMessageBodySchema,
+  createMediaMessageBodySchema,
+]);
+
+const updateTextMessageBodySchema = z
   .object({
     content: z
       .object({
@@ -62,6 +87,22 @@ export const updateMessageBodySchema = z
       .strict(),
   })
   .strict();
+
+const updateMediaMessageBodySchema = z
+  .object({
+    content: z
+      .object({
+        type: z.literal("media"),
+        text: z.string().trim().min(1).max(4_000).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const updateMessageBodySchema = z.union([
+  updateTextMessageBodySchema,
+  updateMediaMessageBodySchema,
+]);
 
 export const messageParamsSchema = z
   .object({

@@ -19,8 +19,13 @@ export const storageBuckets = Object.freeze({
 export const storageSettings = Object.freeze({
   publicAvatarBaseUrl: env.STORAGE_PUBLIC_BASE_URL,
   avatarUploadUrlTtlSeconds: env.AVATAR_UPLOAD_URL_TTL_SECONDS,
+  attachmentDownloadUrlTtlSeconds:
+    env.ATTACHMENT_DOWNLOAD_URL_TTL_SECONDS,
   cleanupIntervalMs: env.MEDIA_CLEANUP_INTERVAL_MS,
   staleUploadAgeMs: env.MEDIA_STALE_UPLOAD_AGE_MS,
+  unboundAttachmentAgeMs: env.MEDIA_UNBOUND_ATTACHMENT_AGE_MS,
+  deletedAttachmentRetentionMs:
+    env.MEDIA_DELETED_ATTACHMENT_RETENTION_MS,
   avatarCacheControl: env.AVATAR_CACHE_CONTROL,
 });
 

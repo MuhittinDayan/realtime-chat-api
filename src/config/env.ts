@@ -111,6 +111,12 @@ const environmentSchema = z.object({
     .positive()
     .max(3_600)
     .default(600),
+  ATTACHMENT_DOWNLOAD_URL_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60)
+    .max(120)
+    .default(60),
   MEDIA_CLEANUP_INTERVAL_MS: z.coerce
     .number()
     .int()
@@ -121,6 +127,16 @@ const environmentSchema = z.object({
     .int()
     .positive()
     .default(3_600_000),
+  MEDIA_UNBOUND_ATTACHMENT_AGE_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(86_400_000),
+  MEDIA_DELETED_ATTACHMENT_RETENTION_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(2_592_000_000),
   AVATAR_CACHE_CONTROL: z
     .string()
     .trim()

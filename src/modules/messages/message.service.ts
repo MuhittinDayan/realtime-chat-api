@@ -2,6 +2,7 @@ import { ConversationNotFoundError } from "../conversations/conversation.errors.
 import { encodeCursor } from "../../shared/pagination/cursor.js";
 import { systemClock, type Clock } from "../../shared/time/clock.js";
 import { MessageNotFoundError } from "./message.errors.js";
+import type { MessageAttachmentDto } from "../attachments/attachment.service.js";
 import type {
   MessageRecord,
   MessageRepository,
@@ -12,17 +13,28 @@ import type {
   UpdateMessageBody,
 } from "./message.schema.js";
 
-export interface MessageDto {
+export interface BaseMessageDto {
   id: string;
   conversationId: string;
   senderId: string;
   clientMessageId: string;
-  kind: "TEXT";
+  kind: "TEXT" | "MEDIA";
   body: string | null;
   createdAt: Date;
   editedAt: Date | null;
   deletedAt: Date | null;
 }
+
+export interface TextMessageDto extends BaseMessageDto {
+  kind: "TEXT";
+}
+
+export interface MediaMessageDto extends BaseMessageDto {
+  kind: "MEDIA";
+  attachments: readonly MessageAttachmentDto[];
+}
+
+export type MessageDto = TextMessageDto | MediaMessageDto;
 
 export interface CreateMessageResult {
   message: MessageDto;
@@ -50,6 +62,7 @@ export class MessageService {
     private readonly conversationAccessService: ConversationAccessService,
     private readonly messagePublisher: MessagePublisher,
     private readonly clock: Clock = systemClock,
+    private readonly deletedAttachmentRetentionMs = 2_592_000_000,
   ) {}
 
   async createMessage(
@@ -58,12 +71,25 @@ export class MessageService {
     input: CreateMessageBody,
   ): Promise<CreateMessageResult> {
     await this.ensureActiveMember(conversationId, userId);
-    const result = await this.messageRepository.createMessage({
-      conversationId,
-      senderId: userId,
-      clientMessageId: input.clientMessageId,
-      body: input.content.text,
-    });
+    const repositoryInput =
+      input.content.type === "media"
+        ? {
+            conversationId,
+            senderId: userId,
+            clientMessageId: input.clientMessageId,
+            kind: "MEDIA" as const,
+            body: input.content.text ?? null,
+            attachmentIds: input.content.attachmentIds,
+          }
+        : {
+            conversationId,
+            senderId: userId,
+            clientMessageId: input.clientMessageId,
+            kind: "TEXT" as const,
+            body: input.content.text,
+            attachmentIds: [],
+          };
+    const result = await this.messageRepository.createMessage(repositoryInput);
     const message = toMessageDto(result.message);
 
     if (result.created) {
@@ -105,6 +131,7 @@ export class MessageService {
       conversationId,
       messageId,
       senderId: userId,
+      kind: input.content.type === "media" ? "MEDIA" : "TEXT",
       body: input.content.text,
       editedAt: this.clock.now(),
     });
@@ -128,11 +155,15 @@ export class MessageService {
     messageId: string,
   ): Promise<MessageDto> {
     await this.ensureActiveMember(conversationId, userId);
+    const deletedAt = this.clock.now();
     const result = await this.messageRepository.softDeleteMessage({
       conversationId,
       messageId,
       senderId: userId,
-      deletedAt: this.clock.now(),
+      deletedAt,
+      attachmentPurgeAfter: new Date(
+        deletedAt.getTime() + this.deletedAttachmentRetentionMs,
+      ),
     });
 
     if (result.message === null) {
@@ -164,11 +195,7 @@ export class MessageService {
 }
 
 function toMessageDto(message: MessageRecord): MessageDto {
-  if (message.kind !== "TEXT") {
-    throw new Error("Unsupported message kind");
-  }
-
-  return {
+  const base = {
     id: message.id,
     conversationId: message.conversationId,
     senderId: message.senderId,
@@ -178,6 +205,51 @@ function toMessageDto(message: MessageRecord): MessageDto {
     createdAt: message.createdAt,
     editedAt: message.editedAt,
     deletedAt: message.deletedAt,
+  };
+
+  if (message.kind === "TEXT") {
+    if (message.body === null) {
+      throw new Error("Text message body is missing");
+    }
+
+    return { ...base, kind: "TEXT" };
+  }
+
+  return {
+    ...base,
+    kind: "MEDIA",
+    attachments:
+      message.deletedAt === null
+        ? message.attachments.map(toMessageAttachmentDto)
+        : [],
+  };
+}
+
+function toMessageAttachmentDto(
+  attachment: MessageRecord["attachments"][number],
+): MessageAttachmentDto {
+  if (
+    attachment.detectedContentType === null ||
+    attachment.width === null ||
+    attachment.height === null ||
+    attachment.readyObjectKey === null ||
+    attachment.thumbnailObjectKey === null
+  ) {
+    throw new Error("Ready message attachment metadata is incomplete");
+  }
+
+  const basePath =
+    `/api/v1/conversations/${attachment.conversationId}` +
+    `/attachments/${attachment.id}`;
+
+  return {
+    id: attachment.id,
+    originalFileName: attachment.originalFileName,
+    contentType: "image/webp",
+    width: attachment.width,
+    height: attachment.height,
+    url: `${basePath}/original`,
+    thumbnailUrl: `${basePath}/thumbnail`,
   };
 }
 

@@ -35,12 +35,14 @@ enum MemberRole {
 
 enum MessageKind {
   TEXT
+  MEDIA
 
   @@map("message_kind")
 }
 
 enum MediaPurpose {
   AVATAR
+  MESSAGE_ATTACHMENT
 
   @@map("media_purpose")
 }
@@ -56,26 +58,26 @@ enum MediaStatus {
 }
 
 model User {
-  id           String     @id @default(uuid()) @db.Uuid
-  email        String     @unique(map: "users_email_key") @db.VarChar(320)
-  username     String     @unique(map: "users_username_key") @db.VarChar(32)
-  displayName  String     @map("display_name") @db.VarChar(80)
-  passwordHash String     @map("password_hash") @db.VarChar(255)
-  avatarUrl    String?    @map("avatar_url") @db.Text
+  id            String     @id @default(uuid()) @db.Uuid
+  email         String     @unique(map: "users_email_key") @db.VarChar(320)
+  username      String     @unique(map: "users_username_key") @db.VarChar(32)
+  displayName   String     @map("display_name") @db.VarChar(80)
+  passwordHash  String     @map("password_hash") @db.VarChar(255)
+  avatarUrl     String?    @map("avatar_url") @db.Text
   avatarAssetId String?    @unique(map: "users_avatar_asset_id_key") @map("avatar_asset_id") @db.Uuid
-  status       UserStatus @default(ACTIVE)
-  lastSeenAt   DateTime?  @map("last_seen_at") @db.Timestamptz(3)
-  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
-  deletedAt    DateTime?  @map("deleted_at") @db.Timestamptz(3)
+  status        UserStatus @default(ACTIVE)
+  lastSeenAt    DateTime?  @map("last_seen_at") @db.Timestamptz(3)
+  createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime?  @map("deleted_at") @db.Timestamptz(3)
 
   createdConversations Conversation[]       @relation("ConversationCreator")
   conversationMembers  ConversationMember[]
   messages             Message[]
   messageReads         MessageRead[]
   authSessions         AuthSession[]
-  ownedMediaAssets     MediaAsset[]          @relation("MediaAssetOwner")
-  avatarAsset          MediaAsset?           @relation("CurrentAvatar", fields: [avatarAssetId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  ownedMediaAssets     MediaAsset[]         @relation("MediaAssetOwner")
+  avatarAsset          MediaAsset?          @relation("CurrentAvatar", fields: [avatarAssetId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@map("users")
 }
@@ -99,8 +101,9 @@ model MediaAsset {
   createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt           DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  owner     User  @relation("MediaAssetOwner", fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  avatarFor User? @relation("CurrentAvatar")
+  owner             User               @relation("MediaAssetOwner", fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  avatarFor         User?              @relation("CurrentAvatar")
+  messageAttachment MessageAttachment?
 
   @@index([ownerId, purpose, status, createdAt], map: "media_assets_owner_id_purpose_status_created_at_idx")
   @@index([status, uploadExpiresAt], map: "media_assets_status_upload_expires_at_idx")
@@ -117,10 +120,11 @@ model Conversation {
   createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt     DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  createdBy    User?                @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  members      ConversationMember[]
-  messages     Message[]
-  messageReads MessageRead[]
+  createdBy          User?                @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  members            ConversationMember[]
+  messages           Message[]
+  messageReads       MessageRead[]
+  messageAttachments MessageAttachment[]
 
   @@index([createdById], map: "conversations_created_by_id_idx")
   @@map("conversations")
@@ -147,18 +151,41 @@ model Message {
   senderId        String      @map("sender_id") @db.Uuid
   clientMessageId String      @map("client_message_id") @db.Uuid
   kind            MessageKind @default(TEXT)
-  body            String      @db.Text
+  body            String?     @db.Text
   createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
   editedAt        DateTime?   @map("edited_at") @db.Timestamptz(3)
   deletedAt       DateTime?   @map("deleted_at") @db.Timestamptz(3)
 
-  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  sender         User          @relation(fields: [senderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  conversation   Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  sender         User                @relation(fields: [senderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   readWatermarks MessageRead[]
+  attachments    MessageAttachment[]
 
   @@unique([senderId, clientMessageId], map: "messages_sender_id_client_message_id_key")
   @@index([conversationId, createdAt(sort: Desc), id(sort: Desc)], map: "messages_conversation_id_created_at_id_idx")
   @@map("messages")
+}
+
+model MessageAttachment {
+  id                 String    @id @default(uuid()) @db.Uuid
+  assetId            String    @unique(map: "message_attachments_asset_id_key") @map("asset_id") @db.Uuid
+  conversationId     String    @map("conversation_id") @db.Uuid
+  messageId          String?   @map("message_id") @db.Uuid
+  originalFileName   String    @map("original_file_name") @db.Text
+  position           Int       @default(0)
+  thumbnailObjectKey String?   @unique(map: "message_attachments_thumbnail_object_key_key") @map("thumbnail_object_key") @db.Text
+  purgeAfter         DateTime? @map("purge_after") @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  asset        MediaAsset   @relation(fields: [assetId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  message      Message?     @relation(fields: [messageId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([messageId, position], map: "message_attachments_message_id_position_key")
+  @@index([conversationId, messageId], map: "message_attachments_conversation_id_message_id_idx")
+  @@index([purgeAfter], map: "message_attachments_purge_after_idx")
+  @@map("message_attachments")
 }
 
 /// Per-user read watermark. Application updates must only advance it in

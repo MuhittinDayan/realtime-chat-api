@@ -8,6 +8,7 @@ import {
 } from "../../http/validation/request-validation.js";
 import { authService } from "../auth/auth-core.js";
 import { createAuthenticationMiddleware } from "../auth/auth.middleware.js";
+import { attachmentRouter } from "../attachments/attachment.routes.js";
 import { messageRouter } from "../messages/message.routes.js";
 import { readRouter } from "../reads/read.routes.js";
 import { conversationController } from "./conversation-core.js";
@@ -50,6 +51,7 @@ export function createConversationRouter(
     ),
   );
   router.use("/:conversationId/messages", messageRouter);
+  router.use("/:conversationId/attachments", attachmentRouter);
   router.use("/:conversationId/read", readRouter);
   router.get(
     "/",

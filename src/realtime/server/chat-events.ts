@@ -1,4 +1,7 @@
-import type { MessageDto } from "../../modules/messages/message.service.js";
+import type {
+  BaseMessageDto,
+  MessageDto,
+} from "../../modules/messages/message.service.js";
 
 export interface GroupMemberEventDto {
   userId: string;
@@ -20,12 +23,17 @@ export interface GroupConversationEventDto {
   members: readonly GroupMemberEventDto[];
 }
 
-export interface MessageEventDto
-  extends Omit<MessageDto, "createdAt" | "editedAt" | "deletedAt"> {
-  createdAt: string;
-  editedAt: string | null;
-  deletedAt: string | null;
-}
+type SerializedMessage<T extends BaseMessageDto> = T extends BaseMessageDto
+  ? Omit<T, "createdAt" | "editedAt" | "deletedAt"> & {
+      createdAt: string;
+      editedAt: string | null;
+      deletedAt: string | null;
+    }
+  : never;
+
+export type MessageCreatedEventDto = SerializedMessage<MessageDto>;
+
+export type MessageEventDto = SerializedMessage<MessageDto>;
 
 export interface ConversationEventPayload {
   conversationId: string;
@@ -74,7 +82,7 @@ export interface ChatServerToClientEvents {
     socketId: string;
     serverTime: string;
   }) => void;
-  "message:created": (payload: { message: MessageEventDto }) => void;
+  "message:created": (payload: { message: MessageCreatedEventDto }) => void;
   "message:updated": (payload: { message: MessageEventDto }) => void;
   "message:deleted": (payload: { message: MessageEventDto }) => void;
   "group:created": (payload: { conversation: GroupConversationEventDto }) => void;

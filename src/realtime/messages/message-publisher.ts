@@ -10,6 +10,7 @@ import type {
   ChatInterServerEvents,
   ChatServerToClientEvents,
   ChatSocketData,
+  MessageCreatedEventDto,
   MessageEventDto,
 } from "../server/chat-events.js";
 
@@ -30,7 +31,7 @@ export class SocketMessagePublisher implements MessagePublisher {
   publishMessageCreated(message: MessageDto): void {
     this.namespace
       ?.to(conversationRoom(message.conversationId))
-      .emit("message:created", { message: toMessageEventDto(message) });
+      .emit("message:created", { message: toMessageCreatedEventDto(message) });
   }
 
   publishMessageUpdated(message: MessageDto): void {
@@ -47,6 +48,17 @@ export class SocketMessagePublisher implements MessagePublisher {
 }
 
 function toMessageEventDto(message: MessageDto): MessageEventDto {
+  return {
+    ...message,
+    createdAt: message.createdAt.toISOString(),
+    editedAt: message.editedAt?.toISOString() ?? null,
+    deletedAt: message.deletedAt?.toISOString() ?? null,
+  };
+}
+
+function toMessageCreatedEventDto(
+  message: MessageDto,
+): MessageCreatedEventDto {
   return {
     ...message,
     createdAt: message.createdAt.toISOString(),
