@@ -244,6 +244,34 @@ Kaynaklar: `src/modules/messages/message.service.ts`, `src/realtime/messages/mes
 
 ### `message:updated`
 
+Faz 14b ile üç mesaj event'i de aynı `TEXT | MEDIA` union'ını taşır. Canlı bir
+MEDIA mesajında `attachments` dizisi bulunur; binary/base64 veya presigned URL
+taşınmaz. `url` ve `thumbnailUrl`, üyelik kontrolü yapıp her istekte yeni kısa
+ömürlü GET üreten API yollarıdır:
+
+```ts
+{
+  message: {
+    kind: "MEDIA";
+    body: string | null;
+    attachments: Array<{
+      id: string;
+      originalFileName: string;
+      contentType: "image/webp";
+      width: number;
+      height: number;
+      url: string;
+      thumbnailUrl: string;
+    }>;
+    // Diğer ortak Message alanları aynıdır.
+  };
+}
+```
+
+`message:updated`, MEDIA için yalnızca caption değiştiğinde yayınlanır ve sabit
+attachment metadata'sını yeniden taşır. TEXT payload'ında `attachments` alanı
+eklenmez.
+
 Gönderenin HTTP düzenleme isteği mesajı gerçekten değiştirdiyse, DB transaction'ı tamamlandıktan sonra `conversation:<conversationId>` odasındaki tüm aktif socket'lere yayınlanır. Gönderenin aynı odaya abone socket'leri de event'i alır. Normalize edilmiş içerik mevcut body ile aynıysa HTTP `200` döner fakat event yayınlanmaz. Yetkisiz, bulunamayan veya silinmiş mesaja yönelik başarısız işlem de event üretmez. Server→Client event'i olduğu için ack yoktur.
 
 Payload mevcut `message:created` ile aynı `{ message }` zarfını kullanır:
@@ -267,6 +295,11 @@ Payload mevcut `message:created` ile aynı `{ message }` zarfını kullanır:
 Kaynaklar: `src/modules/messages/message.service.ts`, `src/modules/messages/message.repository.ts`, `src/realtime/messages/message-publisher.ts`, `src/realtime/server/chat-events.ts`; DB-backed test: `src/contracts/backend-contract.integration.test.ts`.
 
 ### `message:deleted`
+
+Silinen MEDIA mesajında `body: null` ile birlikte `attachments: []` yayınlanır.
+Frontend önceden tuttuğu attachment referanslarını bırakmalıdır; aynı anda HTTP
+indirme erişimi de kesilir. Storage nesnelerinin retention sonundaki fiziksel
+temizliği Socket.IO sözleşmesinin parçası değildir.
 
 Gönderenin ilk başarılı soft-delete işlemi DB'ye commit edildikten sonra `conversation:<conversationId>` odasındaki tüm aktif socket'lere, gönderen dahil, yayınlanır. DB'deki body korunmasına rağmen event payload'ında `body` daima `null` olur. `editedAt` önceki değerini korur ve `deletedAt` sunucunun silme zamanıdır. Tekrarlanan idempotent silme aynı HTTP tombstone'unu döndürür fakat ikinci event üretmez. Server→Client event'i olduğu için ack yoktur.
 
