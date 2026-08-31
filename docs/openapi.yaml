@@ -1205,10 +1205,124 @@ paths:
         "409":
           $ref: "#/components/responses/ConversationConflict"
 
+  /api/v1/conversations/{conversationId}/attachments/uploads:
+    post:
+      tags: [Messages]
+      summary: Mesaj görseli için private upload intent oluşturma
+      operationId: createMessageAttachmentUpload
+      description: Aktif konuşma üyeliği doğrulanır; JPEG, PNG veya WebP kaynak en fazla 10 MiB olabilir.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAttachmentUploadRequest"
+      responses:
+        "201":
+          description: Private upload intent
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachmentUploadIntent"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/AttachmentStorageUnavailable"
+
+  /api/v1/conversations/{conversationId}/attachments/uploads/{attachmentId}/complete:
+    post:
+      tags: [Messages]
+      summary: Yüklenen mesaj görselini doğrulama ve işleme
+      operationId: completeMessageAttachmentUpload
+      description: Kaynak doğrulanır; crop olmadan private WebP asıl ve thumbnail üretilir, raw incoming silinir.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/AttachmentId"
+      responses:
+        "200":
+          description: Mesaja bağlanmaya hazır görsel metadata'sı
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [attachment]
+                properties:
+                  attachment:
+                    $ref: "#/components/schemas/MessageAttachment"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          description: Conversation gizlenmiştir veya upload bulunamadı
+        "409":
+          description: Upload süresi doldu, tamamlanmadı veya durumu çakışıyor
+        "422":
+          description: Yüklenen nesne desteklenen geçerli bir görsel değil
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/AttachmentStorageUnavailable"
+
+  /api/v1/conversations/{conversationId}/attachments/{attachmentId}/{variant}:
+    get:
+      tags: [Messages]
+      summary: Private mesaj görseli için kısa ömürlü indirme yönlendirmesi
+      operationId: accessMessageAttachment
+      description: Aktif üyelik ve bağlı mesajın silinmemiş olduğu doğrulanır; yeni presigned GET ile 307 dönülür.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/AttachmentId"
+        - name: variant
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [original, thumbnail]
+      responses:
+        "307":
+          description: Kısa ömürlü private object-storage URL'sine yönlendirme
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            Location:
+              schema:
+                type: string
+                format: uri
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          description: Conversation, attachment veya erişilebilir canlı mesaj bulunamadı
+        "503":
+          $ref: "#/components/responses/AttachmentStorageUnavailable"
+
   /api/v1/conversations/{conversationId}/messages:
     post:
       tags: [Messages]
-      summary: Metin mesajı oluşturma veya idempotent retry sonucunu döndürme
+      summary: TEXT/MEDIA mesaj oluşturma veya idempotent retry sonucunu döndürme
       operationId: createMessage
       description: Doğrulanmış kullanıcı başına dakikada 60 istekle sınırlıdır.
       security:
@@ -1342,13 +1456,15 @@ paths:
   /api/v1/conversations/{conversationId}/messages/{messageId}:
     patch:
       tags: [Messages]
-      summary: Gönderenin metin mesajını düzenlemesi
+      summary: Gönderenin TEXT içeriğini veya MEDIA caption'ını düzenlemesi
       operationId: updateMessage
       description: |
         Yalnızca mesajı gönderen aktif conversation üyesi düzenleyebilir. Trim
         edilmiş içerik mevcut body ile aynıysa işlem idempotent no-op olur;
         `editedAt` değişmez ve `message:updated` yayınlanmaz. Silinmiş mesaj
-        düzenlenemez.
+        düzenlenemez. MEDIA mesajında yalnızca caption değişir; attachment listesi
+        sabittir ve `attachmentIds` strict validation ile reddedilir. `text: null`
+        caption'ı kaldırır.
       security:
         - bearerAuth: []
       x-source-files:
@@ -1406,7 +1522,8 @@ paths:
         Kayıt DB'den silinmez. İlk başarılı silmede `deletedAt` yazılır ve commit
         sonrasında `message:deleted` yayınlanır. Aynı gönderenin tekrarlanan silme
         isteği aynı tombstone'u döndürür; timestamp değişmez ve ikinci event
-        yayınlanmaz.
+        yayınlanmaz. MEDIA tombstone `body: null` ve `attachments: []` taşır;
+        private erişim anında kesilir, fiziksel silme retention worker'a bırakılır.
       security:
         - bearerAuth: []
       x-source-files:
@@ -1538,6 +1655,14 @@ components:
         type: string
         format: uuid
       example: 33333333-3333-4333-8333-333333333333
+    AttachmentId:
+      name: attachmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      example: 66666666-6666-4666-8666-666666666666
     MessageId:
       name: messageId
       in: path
@@ -1590,6 +1715,17 @@ components:
       example: 60
 
   responses:
+    AttachmentStorageUnavailable:
+      description: Attachment object storage geçici olarak kullanılamıyor
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: ATTACHMENT_STORAGE_UNAVAILABLE
+              message: Attachment storage is temporarily unavailable
+              requestId: 77777777-7777-4777-8777-777777777777
     AvatarStorageUnavailable:
       description: Object storage geçici olarak kullanılamıyor
       content:
@@ -2222,39 +2358,136 @@ components:
           type: string
           format: uuid
         content:
-          type: object
-          additionalProperties: false
-          required: [type, text]
-          properties:
-            type:
-              type: string
-              const: text
-            text:
-              type: string
-              minLength: 1
-              maxLength: 4000
-              description: Kaydedilmeden önce trim edilir.
+          oneOf:
+            - $ref: "#/components/schemas/TextMessageContent"
+            - $ref: "#/components/schemas/MediaMessageContent"
     UpdateMessageRequest:
       type: object
       additionalProperties: false
       required: [content]
       properties:
         content:
-          type: object
-          additionalProperties: false
-          required: [type, text]
-          properties:
-            type:
-              type: string
-              const: text
-            text:
-              type: string
-              minLength: 1
-              maxLength: 4000
-              description: Karşılaştırılmadan ve kaydedilmeden önce trim edilir.
-    Message:
+          oneOf:
+            - $ref: "#/components/schemas/TextMessageContent"
+            - $ref: "#/components/schemas/MediaCaptionUpdateContent"
+    TextMessageContent:
       type: object
       additionalProperties: false
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          const: text
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+    MediaMessageContent:
+      type: object
+      additionalProperties: false
+      required: [type, attachmentIds]
+      properties:
+        type:
+          type: string
+          const: media
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        attachmentIds:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    MediaCaptionUpdateContent:
+      type: object
+      additionalProperties: false
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          const: media
+        text:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 4000
+    CreateAttachmentUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [contentType, contentLength, originalFileName]
+      properties:
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp]
+        contentLength:
+          type: integer
+          minimum: 1
+          maximum: 10485760
+        originalFileName:
+          type: string
+          minLength: 1
+    AttachmentUploadIntent:
+      type: object
+      additionalProperties: false
+      required: [attachmentId, upload]
+      properties:
+        attachmentId:
+          type: string
+          format: uuid
+        upload:
+          $ref: "#/components/schemas/PresignedUpload"
+    PresignedUpload:
+      type: object
+      additionalProperties: false
+      required: [url, method, headers, expiresAt]
+      properties:
+        url:
+          type: string
+          format: uri
+        method:
+          type: string
+          const: PUT
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        expiresAt:
+          type: string
+          format: date-time
+    MessageAttachment:
+      type: object
+      additionalProperties: false
+      required: [id, originalFileName, contentType, width, height, url, thumbnailUrl]
+      properties:
+        id:
+          type: string
+          format: uuid
+        originalFileName:
+          type: string
+        contentType:
+          type: string
+          const: image/webp
+        width:
+          type: integer
+          minimum: 1
+        height:
+          type: integer
+          minimum: 1
+        url:
+          type: string
+        thumbnailUrl:
+          type: string
+    Message:
+      oneOf:
+        - $ref: "#/components/schemas/TextMessage"
+        - $ref: "#/components/schemas/MediaMessage"
+      discriminator:
+        propertyName: kind
+    MessageBase:
+      type: object
       required: [id, conversationId, senderId, clientMessageId, kind, body, createdAt, editedAt, deletedAt]
       properties:
         id:
@@ -2271,7 +2504,7 @@ components:
           format: uuid
         kind:
           type: string
-          const: TEXT
+          enum: [TEXT, MEDIA]
         body:
           type: [string, "null"]
           description: Soft-delete edilmiş mesajda null; saklanan DB içeriği API'de açılmaz.
@@ -2284,6 +2517,27 @@ components:
         deletedAt:
           type: [string, "null"]
           format: date-time
+    TextMessage:
+      allOf:
+        - $ref: "#/components/schemas/MessageBase"
+        - type: object
+          properties:
+            kind:
+              const: TEXT
+    MediaMessage:
+      allOf:
+        - $ref: "#/components/schemas/MessageBase"
+        - type: object
+          required: [attachments]
+          properties:
+            kind:
+              const: MEDIA
+            attachments:
+              type: array
+              maxItems: 4
+              description: Silinmiş MEDIA mesajında boş dizidir.
+              items:
+                $ref: "#/components/schemas/MessageAttachment"
     MessageHistoryResponse:
       type: object
       additionalProperties: false

@@ -38,6 +38,7 @@ export default defineConfig({
       STORAGE_ATTACHMENT_BUCKET: "chat-attachments",
       STORAGE_PUBLIC_BASE_URL: "http://localhost:9000/chat-avatars",
       AVATAR_UPLOAD_URL_TTL_SECONDS: "600",
+      ATTACHMENT_DOWNLOAD_URL_TTL_SECONDS: "60",
       MEDIA_CLEANUP_INTERVAL_MS: "900000",
       MEDIA_STALE_UPLOAD_AGE_MS: "3600000",
       AVATAR_CACHE_CONTROL: "public, max-age=86400",

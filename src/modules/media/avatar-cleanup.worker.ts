@@ -6,6 +6,7 @@ import {
 import { logger } from "../../shared/logging/logger.js";
 import { AvatarCleanupService } from "./avatar-cleanup.service.js";
 import { PrismaAvatarRepository } from "./avatar.repository.js";
+import { PrismaAttachmentRepository } from "../attachments/attachment.repository.js";
 
 export interface CleanupLogger {
   debug(context: object, message: string): void;
@@ -63,9 +64,9 @@ export class AvatarCleanupWorker {
   private async execute(): Promise<void> {
     try {
       const result = await this.service.runOnce();
-      this.cleanupLogger.debug(result, "Avatar cleanup completed");
+      this.cleanupLogger.debug(result, "Media cleanup completed");
     } catch (error: unknown) {
-      this.cleanupLogger.error({ err: error }, "Avatar cleanup failed");
+      this.cleanupLogger.error({ err: error }, "Media cleanup failed");
     }
   }
 }
@@ -75,8 +76,12 @@ const avatarCleanupService = new AvatarCleanupService(
   objectStorage,
   {
     avatarBucket: storageBuckets.avatar,
+    attachmentBucket: storageBuckets.attachment,
     staleUploadAgeMs: storageSettings.staleUploadAgeMs,
+    unboundAttachmentAgeMs: storageSettings.unboundAttachmentAgeMs,
   },
+  undefined,
+  new PrismaAttachmentRepository(),
 );
 
 export const avatarCleanupWorker = new AvatarCleanupWorker(

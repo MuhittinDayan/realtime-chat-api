@@ -4,7 +4,22 @@ import {
 } from "../../generated/prisma/client.js";
 import type { MessageKind } from "../../generated/prisma/enums.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
+import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
+import { AttachmentBindingError } from "../attachments/attachment.errors.js";
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "../attachments/attachment.constants.js";
 import type { MessageHistoryCursor } from "./message.schema.js";
+
+export interface MessageAttachmentRecord {
+  id: string;
+  conversationId: string;
+  originalFileName: string;
+  position: number;
+  detectedContentType: string | null;
+  width: number | null;
+  height: number | null;
+  readyObjectKey: string | null;
+  thumbnailObjectKey: string | null;
+}
 
 export interface MessageRecord {
   id: string;
@@ -12,17 +27,20 @@ export interface MessageRecord {
   senderId: string;
   clientMessageId: string;
   kind: MessageKind;
-  body: string;
+  body: string | null;
   createdAt: Date;
   editedAt: Date | null;
   deletedAt: Date | null;
+  attachments: readonly MessageAttachmentRecord[];
 }
 
 export interface CreateMessageRepositoryInput {
   conversationId: string;
   senderId: string;
   clientMessageId: string;
-  body: string;
+  kind: "TEXT" | "MEDIA";
+  body: string | null;
+  attachmentIds: readonly string[];
 }
 
 export interface CreateMessageRepositoryResult {
@@ -40,7 +58,8 @@ export interface UpdateMessageRepositoryInput {
   conversationId: string;
   messageId: string;
   senderId: string;
-  body: string;
+  kind: "TEXT" | "MEDIA";
+  body: string | null;
   editedAt: Date;
 }
 
@@ -49,6 +68,7 @@ export interface SoftDeleteMessageRepositoryInput {
   messageId: string;
   senderId: string;
   deletedAt: Date;
+  attachmentPurgeAfter: Date;
 }
 
 export interface MessageMutationRepositoryResult {
@@ -81,7 +101,46 @@ const messageSelect = {
   createdAt: true,
   editedAt: true,
   deletedAt: true,
+  attachments: {
+    orderBy: { position: "asc" },
+    select: {
+      id: true,
+      conversationId: true,
+      originalFileName: true,
+      position: true,
+      thumbnailObjectKey: true,
+      asset: {
+        select: {
+          detectedContentType: true,
+          width: true,
+          height: true,
+          readyObjectKey: true,
+        },
+      },
+    },
+  },
 } as const;
+
+type SelectedMessage = Prisma.MessageGetPayload<{
+  select: typeof messageSelect;
+}>;
+
+function toMessageRecord(message: SelectedMessage): MessageRecord {
+  return {
+    ...message,
+    attachments: message.attachments.map((attachment) => ({
+      id: attachment.id,
+      conversationId: attachment.conversationId,
+      originalFileName: attachment.originalFileName,
+      position: attachment.position,
+      thumbnailObjectKey: attachment.thumbnailObjectKey,
+      detectedContentType: attachment.asset.detectedContentType,
+      width: attachment.asset.width,
+      height: attachment.asset.height,
+      readyObjectKey: attachment.asset.readyObjectKey,
+    })),
+  };
+}
 
 function isMessageIdempotencyConflict(error: unknown): boolean {
   if (
@@ -117,16 +176,76 @@ export class PrismaMessageRepository implements MessageRepository {
     try {
       const message = await this.client.$transaction(
         async (transaction) => {
+          if (input.kind === "MEDIA") {
+            if (
+              input.attachmentIds.length < 1 ||
+              input.attachmentIds.length > MAX_ATTACHMENTS_PER_MESSAGE ||
+              new Set(input.attachmentIds).size !== input.attachmentIds.length
+            ) {
+              throw new AttachmentBindingError();
+            }
+
+            const membership = await transaction.conversationMember.findUnique({
+              where: {
+                conversationId_userId: {
+                  conversationId: input.conversationId,
+                  userId: input.senderId,
+                },
+              },
+              select: { leftAt: true },
+            });
+
+            if (membership === null || membership.leftAt !== null) {
+              throw new ConversationNotFoundError();
+            }
+
+            const availableAttachments =
+              await transaction.messageAttachment.findMany({
+                where: {
+                  id: { in: [...input.attachmentIds] },
+                  conversationId: input.conversationId,
+                  messageId: null,
+                  asset: {
+                    ownerId: input.senderId,
+                    purpose: "MESSAGE_ATTACHMENT",
+                    status: "READY",
+                  },
+                },
+                select: { id: true },
+              });
+
+            if (availableAttachments.length !== input.attachmentIds.length) {
+              throw new AttachmentBindingError();
+            }
+          }
+
           const created = await transaction.message.create({
             data: {
               conversationId: input.conversationId,
               senderId: input.senderId,
               clientMessageId: input.clientMessageId,
-              kind: "TEXT",
+              kind: input.kind,
               body: input.body,
             },
             select: messageSelect,
           });
+
+          if (input.kind === "MEDIA") {
+            for (const [position, attachmentId] of input.attachmentIds.entries()) {
+              const bound = await transaction.messageAttachment.updateMany({
+                where: {
+                  id: attachmentId,
+                  conversationId: input.conversationId,
+                  messageId: null,
+                },
+                data: { messageId: created.id, position },
+              });
+
+              if (bound.count !== 1) {
+                throw new AttachmentBindingError();
+              }
+            }
+          }
 
           await transaction.conversation.updateMany({
             where: {
@@ -139,11 +258,18 @@ export class PrismaMessageRepository implements MessageRepository {
             data: { lastMessageAt: created.createdAt },
           });
 
-          return created;
+          if (input.kind === "TEXT") {
+            return created;
+          }
+
+          return transaction.message.findUniqueOrThrow({
+            where: { id: created.id },
+            select: messageSelect,
+          });
         },
       );
 
-      return { message, created: true };
+      return { message: toMessageRecord(message), created: true };
     } catch (error: unknown) {
       if (!isMessageIdempotencyConflict(error)) {
         throw error;
@@ -165,7 +291,7 @@ export class PrismaMessageRepository implements MessageRepository {
   async listMessages(
     input: ListMessagesRepositoryInput,
   ): Promise<readonly MessageRecord[]> {
-    return this.client.message.findMany({
+    const messages = await this.client.message.findMany({
       where: {
         conversationId: input.conversationId,
         ...(input.before === undefined
@@ -184,6 +310,8 @@ export class PrismaMessageRepository implements MessageRepository {
       take: input.take,
       select: messageSelect,
     });
+
+    return messages.map(toMessageRecord);
   }
 
   async updateMessage(
@@ -195,6 +323,7 @@ export class PrismaMessageRepository implements MessageRepository {
           id: input.messageId,
           conversationId: input.conversationId,
           senderId: input.senderId,
+          kind: input.kind,
           deletedAt: null,
           body: { not: input.body },
         },
@@ -208,12 +337,16 @@ export class PrismaMessageRepository implements MessageRepository {
           id: input.messageId,
           conversationId: input.conversationId,
           senderId: input.senderId,
+          kind: input.kind,
           deletedAt: null,
         },
         select: messageSelect,
       });
 
-      return { message, changed: mutation.count > 0 };
+      return {
+        message: message === null ? null : toMessageRecord(message),
+        changed: mutation.count > 0,
+      };
     });
   }
 
@@ -230,6 +363,12 @@ export class PrismaMessageRepository implements MessageRepository {
         },
         data: { deletedAt: input.deletedAt },
       });
+      if (mutation.count > 0) {
+        await transaction.messageAttachment.updateMany({
+          where: { messageId: input.messageId },
+          data: { purgeAfter: input.attachmentPurgeAfter },
+        });
+      }
       const message = await transaction.message.findFirst({
         where: {
           id: input.messageId,
@@ -239,7 +378,10 @@ export class PrismaMessageRepository implements MessageRepository {
         select: messageSelect,
       });
 
-      return { message, changed: mutation.count > 0 };
+      return {
+        message: message === null ? null : toMessageRecord(message),
+        changed: mutation.count > 0,
+      };
     });
   }
 
@@ -252,6 +394,8 @@ export class PrismaMessageRepository implements MessageRepository {
         senderId_clientMessageId: { senderId, clientMessageId },
       },
       select: messageSelect,
-    });
+    }).then((message) =>
+      message === null ? null : toMessageRecord(message),
+    );
   }
 }

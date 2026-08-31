@@ -13,6 +13,8 @@ import type {
   ObjectStorage,
   GetStoredObjectOptions,
   PresignPutInput,
+  PresignGetInput,
+  PresignedGetRequest,
   PresignedPutRequest,
   PutStoredObjectInput,
   StoredObject,
@@ -128,6 +130,27 @@ export class S3ObjectStorage implements ObjectStorage {
       url,
       method: "PUT",
       headers: Object.freeze({ "Content-Type": input.contentType }),
+      expiresAt: new Date(this.now().getTime() + input.expiresInSeconds * 1_000),
+    };
+  }
+
+  public async presignGet(input: PresignGetInput): Promise<PresignedGetRequest> {
+    assertSafeLocation(input);
+    if (!Number.isInteger(input.expiresInSeconds) || input.expiresInSeconds <= 0) {
+      throw new Error("Presigned URL lifetime must be a positive integer");
+    }
+
+    const command = new GetObjectCommand({
+      Bucket: input.bucket,
+      Key: input.key,
+    });
+    const url = await this.signedUrlFactory(this.client, command, {
+      expiresIn: input.expiresInSeconds,
+    });
+
+    return {
+      url,
+      method: "GET",
       expiresAt: new Date(this.now().getTime() + input.expiresInSeconds * 1_000),
     };
   }

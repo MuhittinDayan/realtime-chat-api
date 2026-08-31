@@ -345,6 +345,88 @@ Swagger ilk ve üçüncü API çağrılarını çalıştırabilir. Aradaki imzal
 
 Kaynaklar: `src/modules/media/avatar.service.ts`, `src/modules/media/avatar-image.processor.ts`, `src/modules/media/avatar-cleanup.service.ts`, `src/infrastructure/storage/`; gerçek PostgreSQL testi: `src/modules/media/avatar.postgres.integration.test.ts`.
 
+## B2. Mesaj görseli upload, bağlama, erişim ve retention
+
+Mesaj görseli de API'ye base64/multipart taşınmaz. Aktif conversation üyesi önce
+private upload intent alır, dönen başlıklarla object storage'a PUT yapar ve
+complete çağırır:
+
+```http
+POST /api/v1/conversations/33333333-3333-4333-8333-333333333333/attachments/uploads
+Authorization: Bearer <access-token>
+Content-Type: application/json
+
+{
+  "contentType": "image/png",
+  "contentLength": 245760,
+  "originalFileName": "holiday.png"
+}
+```
+
+```json
+{
+  "attachmentId": "66666666-6666-4666-8666-666666666666",
+  "upload": {
+    "url": "<private-presigned-put>",
+    "method": "PUT",
+    "headers": { "Content-Type": "image/png" },
+    "expiresAt": "2030-01-01T00:10:00.000Z"
+  }
+}
+```
+
+PUT başarılı olduktan sonra
+`POST .../attachments/66666666-6666-4666-8666-666666666666/complete`
+çağrılır. Backend JPEG/PNG/WebP kaynağı, 10 MiB, 8192×8192 ve Sharp toplam-piksel
+sınırlarıyla doğrular; metadata'yı temizleyip crop yapmadan private WebP asıl
+(uzun kenar en fazla 4096) ve thumbnail (uzun kenar en fazla 480) üretir.
+
+Hazır attachment, aynı conversation için MEDIA mesaja atomik bağlanır:
+
+```http
+POST /api/v1/conversations/33333333-3333-4333-8333-333333333333/messages
+Authorization: Bearer <access-token>
+Content-Type: application/json
+
+{
+  "clientMessageId": "55555555-5555-4555-8555-555555555555",
+  "content": {
+    "type": "media",
+    "text": "Tatil",
+    "attachmentIds": ["66666666-6666-4666-8666-666666666666"]
+  }
+}
+```
+
+Bir MEDIA mesajı 1-4 tekrarsız attachment ister. Caption opsiyoneldir; varsa
+1-4000 karakterdir. Sonradan yalnızca caption değiştirilebilir:
+
+```json
+{ "content": { "type": "media", "text": null } }
+```
+
+`attachmentIds` PATCH gövdesinde kabul edilmez ve `400 VALIDATION_ERROR` döner.
+Görseli değiştirmek için mesaj silinip yeniden gönderilir.
+
+Message içindeki `url` / `thumbnailUrl` backend yollarıdır. İstemci bunları Bearer
+token ile çağırır; backend üyeliği ve canlı mesajı doğrulayıp `307` ile 60-120
+saniyelik private GET'e yönlendirir. Presigned URL cache'e veya kalıcı state'e
+yazılmamalıdır. Silinen MEDIA mesajı `attachments: []` olur ve GET anında 404
+döner; nesneler request sırasında silinmez. Soft-delete eki 30 gün, READY ama
+bağlanmamış ek 24 saat, süresi dolmuş PENDING/REJECTED/CANCELLED ek ise bir
+saatlik güvenlik aralığından sonra mevcut media cleanup worker'ında temizlenir.
+Süreler env ile değiştirilebilir.
+
+Format ve lifecycle hata kodları: `UNSUPPORTED_ATTACHMENT_FORMAT`,
+`ATTACHMENT_UPLOAD_NOT_FOUND`, `ATTACHMENT_UPLOAD_EXPIRED`,
+`ATTACHMENT_UPLOAD_INCOMPLETE`, `ATTACHMENT_UPLOAD_CONFLICT`,
+`INVALID_ATTACHMENT_FILE`, `ATTACHMENT_STORAGE_UNAVAILABLE`,
+`ATTACHMENT_BINDING_CONFLICT` ve erişimde `ATTACHMENT_NOT_FOUND`.
+
+Upload intent'ten sonra kullanıcı gruptan çıkarılırsa PUT imzası tekil olarak
+geri alınamadığı için süresi dolana kadar storage'a yazabilir. Complete ve binding
+404 ile reddedilir; artık incoming nesnesi cleanup worker'a bırakılır.
+
 ## C. `POST .../messages` idempotent retry
 
 ### Kesin davranış

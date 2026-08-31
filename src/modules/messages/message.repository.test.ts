@@ -20,6 +20,7 @@ const message = {
   createdAt: NOW,
   editedAt: null,
   deletedAt: null,
+  attachments: [],
 };
 
 describe("Prisma message repository", () => {
@@ -54,7 +55,9 @@ describe("Prisma message repository", () => {
       conversationId: CONVERSATION_ID,
       senderId: ALICE_ID,
       clientMessageId: CLIENT_MESSAGE_ID,
+      kind: "TEXT",
       body: "hello",
+      attachmentIds: [],
     });
 
     expect(result).toEqual({ message, created: true });
@@ -103,7 +106,9 @@ describe("Prisma message repository", () => {
       conversationId: CONVERSATION_ID,
       senderId: ALICE_ID,
       clientMessageId: CLIENT_MESSAGE_ID,
+      kind: "TEXT",
       body: "hello",
+      attachmentIds: [],
     });
 
     expect(result).toEqual({ message, created: false });
@@ -153,6 +158,7 @@ describe("Prisma message repository", () => {
       conversationId: CONVERSATION_ID,
       messageId: message.id,
       senderId: ALICE_ID,
+      kind: "TEXT",
       body: "updated",
       editedAt: NOW,
     });
@@ -164,6 +170,7 @@ describe("Prisma message repository", () => {
           id: message.id,
           conversationId: CONVERSATION_ID,
           senderId: ALICE_ID,
+          kind: "TEXT",
           deletedAt: null,
           body: { not: "updated" },
         },
@@ -190,6 +197,7 @@ describe("Prisma message repository", () => {
       messageId: message.id,
       senderId: ALICE_ID,
       deletedAt: new Date(NOW.getTime() + 1_000),
+      attachmentPurgeAfter: new Date(NOW.getTime() + 2_000),
     });
 
     expect(result).toEqual({ message: deleted, changed: false });

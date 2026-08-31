@@ -68,7 +68,7 @@ describe("avatar cleanup worker", () => {
     expect(stopped).toBe(true);
     expect(cleanupLogger.debug).toHaveBeenCalledWith(
       { inspected: 1, deletedAssets: 1, clearedIncomingObjects: 1 },
-      "Avatar cleanup completed",
+      "Media cleanup completed",
     );
   });
 
@@ -83,7 +83,7 @@ describe("avatar cleanup worker", () => {
     await expect(worker.tick()).resolves.toBeUndefined();
     expect(cleanupLogger.error).toHaveBeenCalledWith(
       { err: failure },
-      "Avatar cleanup failed",
+      "Media cleanup failed",
     );
   });
 

@@ -12,9 +12,9 @@
 
 Proje, bire bir ve grup mesajlaşmasına yönelik backend MVP'sinin ana akışlarını tamamlamış durumda. Kullanıcı kaydı, profil/parola/session yönetimi, kullanıcı arama, DIRECT/GROUP konuşma yönetimi, mesaj gönderme, düzenleme, soft-delete ve geçmişi alma, okundu bilgisini ilerletme, Socket.IO üzerinden mesaj/okundu/typing/presence, grup yaşam döngüsü ve session iptali yayınları kodda mevcut. Kod tabanı modüler, TypeScript strict kuralları açık ve servis–repository ayrımı genel olarak temiz.
 
-Faz 14a sonrasında 41 test dosyasındaki 240 testin tamamı geçti. Typecheck ve production build başarılı; auth/mesaj/grup senaryolarına ek olarak avatar media ilişkisinin PostgreSQL davranışı ve private MinIO kaynağının doğrulanıp public 512×512 WebP'ye dönüştürülmesi gerçek servislerle doğrulandı. Docker Compose tabanlı tek-komut PostgreSQL + MinIO kurulumu, OpenAPI/Socket.IO sözleşmeleri, development/test ortamında Swagger UI, coverage eşikleri, güvenlik sertleştirmesi ve seri GitHub Actions hattı mevcuttur. Mevcut seviye **“sözleşmesi belgelenmiş, güvenlik temelleri sertleştirilmiş, gerçek veritabanı ve object storage ile doğrulanmış, tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
+Faz 14b sonrasında 46 test dosyasındaki 263 testin tamamı geçti. Typecheck ve production build başarılı; auth/mesaj/grup/avatar senaryolarına ek olarak private görsel upload→işleme→MEDIA mesaja bağlama→üyelik kontrollü indirme→soft-delete→retention cleanup akışı gerçek PostgreSQL ve MinIO ile doğrulandı. Docker Compose tabanlı tek-komut PostgreSQL + MinIO kurulumu, OpenAPI/Socket.IO sözleşmeleri, development/test ortamında Swagger UI, coverage eşikleri, güvenlik sertleştirmesi ve seri GitHub Actions hattı mevcuttur. Mevcut seviye **“sözleşmesi belgelenmiş, güvenlik temelleri sertleştirilmiş, gerçek veritabanı ve object storage ile doğrulanmış, tekrarlanabilir geliştirme/CI tabanı bulunan backend MVP”** olarak değerlendirilebilir.
 
-Faz 14a ile S3/R2 uyumlu object-storage temeli ve avatar yaşam döngüsü tamamlandı. Bir sonraki backend adımı ürün önceliğine göre private mesaj görseli/belge ekleri (Faz 14b/14c), e-posta doğrulama/parola sıfırlama veya çoklu instance güvenilirliği arasından seçilmelidir.
+Faz 14a/14b ile S3/R2 uyumlu object-storage temeli, avatar yaşam döngüsü ve private mesaj görseli tamamlandı. Bir sonraki backend adımı ürün önceliğine göre belge ekleri/malware taraması (Faz 14c), e-posta doğrulama/parola sıfırlama veya çoklu instance güvenilirliği arasından seçilmelidir.
 
 ## 2. Teknoloji ve mimari özeti
 
@@ -127,25 +127,26 @@ Mevcut ana tablolar:
 - `users`: profil, durum, son görülme ve soft-delete alanları
 - `conversations`: `DIRECT` / `GROUP` tipi, başlık ve son mesaj zamanı
 - `conversation_members`: üyelik ve `MEMBER` / `ADMIN` / `OWNER` rolleri
-- `messages`: metin mesajı, istemci mesaj kimliği, düzenlenme/silinme alanları
+- `messages`: TEXT/MEDIA mesajı, opsiyonel caption, istemci mesaj kimliği ve düzenlenme/silinme alanları
+- `message_attachments`: private media asset ile conversation/mesaj ilişkisi, sıralama, thumbnail ve purge zamanı
 - `message_reads`: kullanıcı başına monoton ilerleyen okundu watermark'ı
 - `auth_sessions`: hash'lenmiş refresh token, nullable user-agent, süre ve iptal bilgisi
-- `media_assets`: avatar upload amacı/durumu, private incoming ve public-ready object anahtarları, doğrulanan boyut/MIME/ölçüler ve kullanıcı ilişkisi
+- `media_assets`: avatar veya mesaj eki amacı/durumu, private incoming/ready object anahtarları, doğrulanan boyut/MIME/ölçüler ve sahip ilişkisi
 
 Doğrudan konuşma anahtarı ile konuşma tekilleştirilmiş; mesajlarda `(senderId, clientMessageId)` tekilliği ile istemci retry'ları idempotent hale getirilmiştir. Listeleme sorgularında offset yerine keyset/cursor sayfalama kullanılmıştır.
 
 ## 4. Kalite doğrulama sonucu
 
-28 Ağustos 2026 tarihinde aşağıdaki kontroller çalıştırıldı:
+31 Ağustos 2026 tarihinde aşağıdaki kontroller çalıştırıldı:
 
 | Kontrol | Sonuç |
 | --- | --- |
 | `npm audit --omit=dev` | Başarılı — 0 production açığı |
 | `prisma generate` + `prisma validate` | Başarılı |
-| `npm test` | Başarılı — 41 dosya, 240/240 test |
+| `npm test` | Başarılı — 46 dosya, 263/263 test |
 | `npm run typecheck` | Başarılı |
 | `npm run build` | Başarılı |
-| `npm test -- --coverage` | Başarılı — statement %84,79; branch %73,67; function %87,41; line %86,86 |
+| `npm test -- --coverage` | Başarılı — statement %84,07; branch %74,09; function %87,42; line %85,84 |
 | `npm run setup:local` | Başarılı — PostgreSQL 17, MinIO, iki bucket/policy, `chat` + `chat_test`, migration ve seed |
 
 Not: Typecheck ve build komutlarının ikisi de `prisma generate` çalıştırıyor. Bunlar aynı çalışma dizininde paralel başlatıldığında Windows üzerinde üretilen klasöre eşzamanlı erişim nedeniyle geçici `EPERM` oluşabiliyor. Seri çalıştırıldıklarında ikisi de başarılıdır. CI hattı ya kontrolleri seri çalıştırmalı ya da Prisma Client'ı tek bir hazırlık adımında üretmelidir.
@@ -216,7 +217,7 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 
 - Mesaj düzenleme ve soft-delete DIRECT ve GROUP konuşmalarında gönderen yetkisiyle desteklenir; grup yöneticisinin başka kullanıcının mesajını silmesi kapsam dışıdır.
 - Username/görünen ad profil güncellemesi, avatar yükleme/silme, parola değiştirme, aktif session listesi, belirli session'ı ve mevcut dışındaki tüm session'ları iptal etme hazırdır. Parola sıfırlama ve e-posta doğrulama kapsam dışıdır.
-- Mesaj görseli/belge eki için private attachment bucket altyapısı hazırdır; attachment veri modeli ve konuşma üyeliğine bağlı indirme sözleşmesi Faz 14b/14c kapsamındadır. Mesaj arama, bildirim, engelleme/raporlama ve moderasyon kapsam dışındadır.
+- Mesaj görseli için private attachment yaşam döngüsü Faz 14b kapsamında hazırdır. PDF/belge, malware taraması ve ham dosya indirme Faz 14c kapsamındadır. Mesaj arama, bildirim, engelleme/raporlama ve moderasyon kapsam dışındadır.
 
 ### Ölçek ve güvenilirlik
 
@@ -225,7 +226,19 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 - Veritabanı commit'inden sonra Socket.IO'ya doğrudan yayın yapılıyor. Süreç çökmesi veya publisher hatasında kayıt kalıcı olup event kaybolabilir; outbox/retry mekanizması yok.
 - HTTP mesaj oluşturma ve Socket.IO `typing:set` için süreç içi rate limit vardır; dağıtık kota, genel backpressure ve yük testi henüz yoktur.
 
-### Faz 14a storage kararları ve bilinen sınırlamalar
+### Faz 14a/14b storage kararları ve bilinen sınırlamalar
+
+- Mesaj görselleri private `chat-attachments` bucket'ında tutulur. Upload intent,
+  complete, mesaja binding ve her presigned GET üretiminde aktif conversation
+  üyeliği ayrı ayrı doğrulanır. Intent verildikten sonra üyelik kaldırılırsa mevcut
+  PUT imzası geri alınamaz; complete/binding reddedilir ve nesne cleanup worker'a
+  bırakılır.
+- `provision-storage.ts` bucket-level CORS uygulayabilen yardımcıyı içerir ancak
+  runtime/deployment akışında bu fonksiyon çağrılmaz; yerel MinIO global CORS
+  davranışına dayanır. Production storage kurulumu `chat-attachments` için izinli
+  frontend origin, PUT/GET/HEAD method/header kuralları ve private IAM/policy'yi
+  ayrıca uygulamalıdır. Aksi halde API doğru çalışsa bile tarayıcı doğrudan PUT'ta
+  CORS hatası verir.
 
 - R2 uyumlu presigned PUT akışında `Content-Type` imzaya bağlanır; ancak 5 MiB sınırı ingress sırasında `content-length-range` politikasıyla zorlanamaz. Bu nedenle kötü/bozuk bir istemci daha büyük private `incoming/` nesnesini storage'a göndermiş olabilir. Backend complete aşamasında önce HEAD ile gerçek boyutu kontrol eder, ardından indirmeyi 5 MiB + 1 byte ile sınırlar ve aşımı `422 INVALID_AVATAR_FILE` olarak reddeder; stale nesne periyodik temizlikle kaldırılır. Bu yaklaşım uygulama belleğini korur fakat storage'a ulaşmış ingress trafiğini ve geçici nesne maliyetini geri alamaz. İleride ingress'te kesin sınır gerekirse upload proxy/edge kuralı veya sağlayıcıya özgü doğrulanmış bir mekanizma ayrıca tasarlanmalıdır.
 - Avatar upload intent ve complete uçları kullanıcı başına ortak `20 istek / 15 dakika` kotası kullanır. Normal bir avatar değişimi iki istek tükettiği için bu değer yaklaşık 10 tam değişime izin verir; kullanıcı hatalarına tolerans bırakırken kötüye kullanımı sınırlar. Sayı Faz 14a kapsamında 28 Ağustos 2026'da bu gerekçeyle onaylanmıştır.
@@ -237,6 +250,13 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 - OpenAPI, Socket.IO sözleşmesi ve frontend entegrasyon örnekleri `docs/` altında mevcuttur.
 - Metrik, tracing, hata takip sistemi ve alarm tanımları yok; şu an temel yapılandırılmış loglar ve health endpoint'leri var.
 - Production deployment manifesti, ters proxy/WebSocket ayarı, migration çalıştırma prosedürü, yedekleme ve geri dönüş planı belgelenmemiş.
+
+### Faz 18-19 production hazırlığı
+
+- Storage provisioning adımında bucket-level CORS ve IAM/policy uygulaması
+  zorunlu bir deployment kontrolü yapılmalıdır; özellikle private attachment PUT,
+  presigned GET ve gerekli HEAD istekleri gerçek frontend origin'iyle smoke-test
+  edilmelidir. Yerel MinIO global CORS ayarı production doğrulaması sayılmaz.
 
 ### Güvenlik sertleştirmesi
 
@@ -261,7 +281,7 @@ P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritaba
 
 1. **Tamamlandı — Grup konuşmaları MVP.** Oluşturma, başlık, üye yaşam döngüsü, rol matrisi, sahiplik devri, 100 aktif üye sınırı ve GROUP socket event'leri eklendi.
 2. **Tamamlandı — Mesaj yaşam döngüsü.** Gönderen için düzenleme, idempotent soft-delete, tombstone gösterimi ve `message:updated` / `message:deleted` event'leri eklendi.
-3. **Tamamlandı — Profil ve avatar yönetimi (Faz 14a).** Username/görünen ad güncellemesi ile private incoming upload, güvenli görsel doğrulama/dönüştürme, public avatar URL'si, kaldırma ve periyodik artık-nesne temizliği hazırdır. Mesaj ekleri ayrı Faz 14b/14c kapsamındadır.
+3. **Tamamlandı — Profil/avatar ve mesaj görseli (Faz 14a/14b).** Avatar yaşam döngüsüne ek olarak private görsel upload, doğrulama/thumbnail, atomik MEDIA mesaj binding'i, üyeliğe bağlı kısa ömürlü GET, caption-only PATCH, soft-delete erişim kesme ve retention cleanup hazırdır. PDF/belge ve malware taraması Faz 14c kapsamındadır.
 4. **Kısmen tamamlandı — Hesap ve session yönetimi.** Parola değiştirme, aktif session listesi, belirli session'ı ve diğer session'ları iptal etme hazırdır; e-posta doğrulama ve parola sıfırlama e-posta sağlayıcısı kararıyla sonraki faza bırakılmıştır.
 5. Backend sözleşme testlerinde reconnect sonrası yeniden abonelik, token refresh, idempotent retry, cursor pagination ve typing timeout davranışlarını doğrula; frontend geliştiricisine örnek istek/event akışlarını sağla. Frontend uygulama kodu bu backend planının kapsamı dışındadır.
 
@@ -275,7 +295,7 @@ P0 tamamlanma ölçütü: Yeni backend geliştiricisi tek komut setiyle veritaba
 
 ### P3 — İleri ürün yetenekleri
 
-- Dosya/görsel ekleri ve güvenli medya işleme
+- PDF/belge ekleri, malware taraması ve güvenli ham dosya indirme (Faz 14c)
 - Mesaj arama ve uygun indeksleme
 - Push/e-posta bildirimleri ve kullanıcı tercihleri
 - Engelleme, raporlama, spam önleme ve moderasyon
@@ -301,7 +321,7 @@ Geliştirmeye başlamadan önce aşağıdaki ürün/altyapı kararları netleşt
 - Grup konuşmaları production kapsamına dahildir; istemci tarafında OWNER/ADMIN yönetim ekranlarının hangi sürümde açılacağı netleştirilmelidir.
 - Tek instance ile başlanacaksa beklenen eşzamanlı socket ve mesaj hacmi nedir; çoklu instance hangi eşikte zorunlu olacak?
 - Frontend ve API aynı site altındaki farklı subdomain'lerde mi kalacak? Bu karar cookie/CSRF tasarımını etkiler.
-- Mesaj ekleri için S3/R2 uyumlu private bucket kararı hazırdır; Faz 14b/14c'de izin verilen türler, konuşma üyeliğine bağlı presigned GET ve belge virüs tarama akışı kesinleştirilmelidir.
+- Görsel eklerinin private bucket, üyeliğe bağlı presigned GET ve retention kararları Faz 14b'de kesinleşmiştir; Faz 14c için belge türleri ve malware tarama sağlayıcısı ayrıca seçilmelidir.
 - Soft-delete edilen mesajların DB body’si için production saklama/anonymization süresi ne olmalıdır?
 - Production hedefi nedir: tek sunucu, container platformu veya yönetilen bir servis mi?
 

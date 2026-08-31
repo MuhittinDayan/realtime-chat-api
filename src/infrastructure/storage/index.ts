@@ -3,6 +3,8 @@ export type {
   ObjectStorage,
   GetStoredObjectOptions,
   PresignPutInput,
+  PresignGetInput,
+  PresignedGetRequest,
   PresignedPutRequest,
   PutStoredObjectInput,
   StorageBody,

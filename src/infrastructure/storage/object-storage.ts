@@ -7,6 +7,12 @@ export interface PresignedPutRequest {
   expiresAt: Date;
 }
 
+export interface PresignedGetRequest {
+  url: string;
+  method: "GET";
+  expiresAt: Date;
+}
+
 export interface StoredObjectMetadata {
   contentLength: number | undefined;
   contentType: string | undefined;
@@ -37,6 +43,12 @@ export interface PresignPutInput {
   expiresInSeconds: number;
 }
 
+export interface PresignGetInput {
+  bucket: string;
+  key: string;
+  expiresInSeconds: number;
+}
+
 export interface ObjectLocation {
   bucket: string;
   key: string;
@@ -48,6 +60,7 @@ export interface GetStoredObjectOptions {
 
 export interface ObjectStorage {
   presignPut(input: PresignPutInput): Promise<PresignedPutRequest>;
+  presignGet(input: PresignGetInput): Promise<PresignedGetRequest>;
   headObject(location: ObjectLocation): Promise<StoredObjectMetadata>;
   getObject(
     location: ObjectLocation,
