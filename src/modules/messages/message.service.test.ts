@@ -12,7 +12,11 @@ import type {
   UpdateMessageRepositoryInput,
 } from "./message.repository.js";
 import { MessageNotFoundError } from "./message.errors.js";
-import { messageHistoryQuerySchema } from "./message.schema.js";
+import {
+  createMessageBodySchema,
+  messageHistoryQuerySchema,
+  updateMessageBodySchema,
+} from "./message.schema.js";
 import {
   MessageService,
   type ConversationAccessService,
@@ -25,6 +29,13 @@ const BOB_ID = "55555555-5555-4555-8555-555555555555";
 const CONVERSATION_ID = "22222222-2222-4222-8222-222222222222";
 const CLIENT_MESSAGE_ID = "33333333-3333-4333-8333-333333333333";
 const NOW = new Date("2030-01-01T00:00:00.000Z");
+
+function createMediaMessage(input: { attachmentIds: string[] }) {
+  return createMessageBodySchema.safeParse({
+    clientMessageId: CLIENT_MESSAGE_ID,
+    content: { type: "media", attachmentIds: input.attachmentIds },
+  });
+}
 
 function createRecord(
   index: number,
@@ -43,6 +54,7 @@ function createRecord(
     createdAt,
     editedAt: null,
     deletedAt: null,
+    attachments: [],
   };
 }
 
@@ -50,6 +62,7 @@ class InMemoryMessageRepository implements MessageRepository {
   readonly records: MessageRecord[] = [];
   createCount = 0;
   readonly lifecycle: string[];
+  lastAttachmentPurgeAfter: Date | null = null;
 
   constructor(lifecycle: string[] = []) {
     this.lifecycle = lifecycle;
@@ -74,6 +87,7 @@ class InMemoryMessageRepository implements MessageRepository {
       conversationId: input.conversationId,
       senderId: input.senderId,
       clientMessageId: input.clientMessageId,
+      kind: input.kind,
       body: input.body,
     };
     this.records.push(message);
@@ -117,6 +131,7 @@ class InMemoryMessageRepository implements MessageRepository {
         record.id === input.messageId &&
         record.conversationId === input.conversationId &&
         record.senderId === input.senderId &&
+        record.kind === input.kind &&
         record.deletedAt === null,
     );
 
@@ -153,6 +168,7 @@ class InMemoryMessageRepository implements MessageRepository {
     }
 
     message.deletedAt = input.deletedAt;
+    this.lastAttachmentPurgeAfter = input.attachmentPurgeAfter;
     this.lifecycle.push("commit");
     return { message, changed: true };
   }
@@ -190,6 +206,24 @@ class RecordingPublisher implements MessagePublisher {
 }
 
 describe("message service creation", () => {
+  it("validates one to four unique attachment ids for MEDIA messages", () => {
+    const attachmentId = "99999999-9999-4999-8999-999999999999";
+    expect(
+      createMediaMessage({ attachmentIds: [attachmentId] }).success,
+    ).toBe(true);
+    expect(
+      createMediaMessage({ attachmentIds: [attachmentId, attachmentId] }).success,
+    ).toBe(false);
+    expect(
+      createMediaMessage({
+        attachmentIds: [1, 2, 3, 4, 5].map(
+          (index) =>
+            `90000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        ),
+      }).success,
+    ).toBe(false);
+  });
+
   it("creates, trims and publishes a message only after repository commit", async () => {
     const lifecycle: string[] = [];
     const repository = new InMemoryMessageRepository(lifecycle);
@@ -329,6 +363,69 @@ describe("message history service", () => {
 });
 
 describe("message lifecycle service", () => {
+  it("strictly validates MEDIA caption-only updates", () => {
+    expect(
+      updateMessageBodySchema.safeParse({
+        content: { type: "media", text: null },
+      }).success,
+    ).toBe(true);
+    expect(
+      updateMessageBodySchema.safeParse({
+        content: {
+          type: "media",
+          text: "caption",
+          attachmentIds: ["99999999-9999-4999-8999-999999999999"],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("updates only a MEDIA caption and can remove it with null", async () => {
+    const repository = new InMemoryMessageRepository();
+    const original: MessageRecord = {
+      ...createRecord(1),
+      kind: "MEDIA",
+      body: "caption",
+      attachments: [
+        {
+          id: "99999999-9999-4999-8999-999999999999",
+          conversationId: CONVERSATION_ID,
+          originalFileName: "photo.png",
+          position: 0,
+          detectedContentType: "image/png",
+          width: 640,
+          height: 480,
+          readyObjectKey: "ready/original.webp",
+          thumbnailObjectKey: "ready/thumbnail.webp",
+        },
+      ],
+    };
+    repository.records.push(original);
+    const publisher = new RecordingPublisher();
+    const service = new MessageService(
+      repository,
+      new FakeConversationAccess(true),
+      publisher,
+      { now: () => NOW },
+    );
+
+    const updated = await service.updateMessage(
+      ALICE_ID,
+      CONVERSATION_ID,
+      original.id,
+      { content: { type: "media", text: null } },
+    );
+
+    expect(updated).toMatchObject({
+      kind: "MEDIA",
+      body: null,
+      editedAt: NOW,
+      attachments: [{ id: original.attachments[0]?.id }],
+    });
+    expect(original.attachments).toHaveLength(1);
+    expect(publisher.updatedMessages).toEqual([updated]);
+  });
+
   it("lets the sender update content and publishes only after commit", async () => {
     const lifecycle: string[] = [];
     const repository = new InMemoryMessageRepository(lifecycle);
@@ -370,7 +467,7 @@ describe("message lifecycle service", () => {
       ALICE_ID,
       CONVERSATION_ID,
       original.id,
-      { content: { type: "text", text: original.body } },
+      { content: { type: "text", text: original.body ?? "" } },
     );
 
     expect(unchanged.editedAt).toBeNull();
@@ -429,12 +526,58 @@ describe("message lifecycle service", () => {
     expect(retry).toEqual(deleted);
     expect(original.body).toBe("message 1");
     expect(publisher.deletedMessages).toEqual([deleted]);
+    expect(repository.lastAttachmentPurgeAfter).toEqual(
+      new Date(NOW.getTime() + 2_592_000_000),
+    );
     expect(lifecycle).toEqual(["commit", "publish:delete"]);
     await expect(
       service.updateMessage(ALICE_ID, CONVERSATION_ID, original.id, {
         content: { type: "text", text: "cannot revive" },
       }),
     ).rejects.toBeInstanceOf(MessageNotFoundError);
+  });
+
+  it("hides MEDIA attachments from the deletion response and event", async () => {
+    const repository = new InMemoryMessageRepository();
+    const original: MessageRecord = {
+      ...createRecord(1),
+      kind: "MEDIA",
+      body: "caption",
+      attachments: [
+        {
+          id: "99999999-9999-4999-8999-999999999999",
+          conversationId: CONVERSATION_ID,
+          originalFileName: "photo.png",
+          position: 0,
+          detectedContentType: "image/png",
+          width: 640,
+          height: 480,
+          readyObjectKey: "ready/original.webp",
+          thumbnailObjectKey: "ready/thumbnail.webp",
+        },
+      ],
+    };
+    repository.records.push(original);
+    const publisher = new RecordingPublisher();
+    const service = new MessageService(
+      repository,
+      new FakeConversationAccess(true),
+      publisher,
+      { now: () => NOW },
+    );
+
+    const deleted = await service.deleteMessage(
+      ALICE_ID,
+      CONVERSATION_ID,
+      original.id,
+    );
+
+    expect(deleted).toMatchObject({
+      kind: "MEDIA",
+      body: null,
+      attachments: [],
+    });
+    expect(publisher.deletedMessages).toEqual([deleted]);
   });
 
   it("hides the conversation before looking up a message for a non-member", async () => {

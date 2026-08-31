@@ -177,6 +177,7 @@ class InMemoryMessageRepository implements MessageRepository {
       createdAt: NOW,
       editedAt: null,
       deletedAt: null,
+      attachments: [],
     };
     this.message = created;
     return { message: created, created: true };

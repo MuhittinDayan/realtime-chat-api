@@ -52,6 +52,33 @@ describe("S3ObjectStorage", () => {
     });
   });
 
+  it("creates a short-lived presigned GET request", async () => {
+    const client = { send: vi.fn() } as unknown as S3Client;
+    const signedUrlFactory = vi.fn().mockResolvedValue("https://download.test/signed");
+    const storage = new S3ObjectStorage(
+      client,
+      signedUrlFactory,
+      () => new Date("2026-08-28T10:00:00.000Z"),
+    );
+
+    const result = await storage.presignGet({
+      bucket: "chat-attachments",
+      key: "ready/user/asset/thumbnail.webp",
+      expiresInSeconds: 60,
+    });
+
+    expect(result).toEqual({
+      url: "https://download.test/signed",
+      method: "GET",
+      expiresAt: new Date("2026-08-28T10:01:00.000Z"),
+    });
+    expect(signedUrlFactory).toHaveBeenCalledWith(
+      client,
+      expect.any(GetObjectCommand),
+      { expiresIn: 60 },
+    );
+  });
+
   it("supports head, get, put, and idempotent delete commands", async () => {
     const send = vi
       .fn()

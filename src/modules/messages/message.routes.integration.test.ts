@@ -60,7 +60,13 @@ class FakeMessageService implements MessageHttpService {
       throw this.error;
     }
     this.createInput = input;
-    return { message: { ...message, body: input.content.text }, created: true };
+    return {
+      message: {
+        ...message,
+        body: input.content.text ?? null,
+      },
+      created: true,
+    };
   }
 
   async listMessages(
@@ -164,6 +170,7 @@ describe("message HTTP routes", () => {
 
     expect(service.createInput?.content.text).toBe("hello");
     expect(response.body.body).toBe("hello");
+    expect(response.body).not.toHaveProperty("attachments");
   });
 
   it.each(["   ", "x".repeat(4_001)])(
@@ -249,6 +256,26 @@ describe("message HTTP routes", () => {
       )
       .set("Authorization", "Bearer token")
       .send({ content: { type: "text", text: "   " } })
+      .expect(400);
+
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(service.updateInput).toBeNull();
+  });
+
+  it("rejects attachment mutation fields in a MEDIA caption PATCH", async () => {
+    const service = new FakeMessageService();
+    const response = await request(createTestApp(service))
+      .patch(
+        `/api/v1/conversations/${CONVERSATION_ID}/messages/${message.id}`,
+      )
+      .set("Authorization", "Bearer token")
+      .send({
+        content: {
+          type: "media",
+          text: null,
+          attachmentIds: ["99999999-9999-4999-8999-999999999999"],
+        },
+      })
       .expect(400);
 
     expect(response.body.error.code).toBe("VALIDATION_ERROR");

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type {
   ObjectLocation,
   ObjectStorage,
+  PresignGetInput,
+  PresignedGetRequest,
   PresignPutInput,
   PresignedPutRequest,
   PutStoredObjectInput,
@@ -10,6 +12,10 @@ import type {
   StoredObjectMetadata,
 } from "../../infrastructure/storage/index.js";
 import type { UserRecord } from "../auth/auth.repository.js";
+import type {
+  AttachmentCleanupCandidate,
+  AttachmentRepository,
+} from "../attachments/attachment.repository.js";
 import { AvatarCleanupService } from "./avatar-cleanup.service.js";
 import type {
   AvatarAssetRecord,
@@ -92,6 +98,9 @@ class CleanupStorage implements ObjectStorage {
   async presignPut(_input: PresignPutInput): Promise<PresignedPutRequest> {
     throw new Error("not used");
   }
+  async presignGet(_input: PresignGetInput): Promise<PresignedGetRequest> {
+    throw new Error("not used");
+  }
   async headObject(): Promise<StoredObjectMetadata> {
     throw new Error("not used");
   }
@@ -149,5 +158,85 @@ describe("avatar cleanup service", () => {
       { bucket: "avatars", key: "incoming/upload" },
     ]);
     expect(repository.deleted).toEqual([]);
+  });
+
+  it("uses the same worker pass to purge expired attachment objects", async () => {
+    const repository = new CleanupRepository();
+    const storage = new CleanupStorage();
+    const attachmentCandidate = {
+      id: "33333333-3333-4333-8333-333333333333",
+      assetId: "44444444-4444-4444-8444-444444444444",
+      ownerId: "22222222-2222-4222-8222-222222222222",
+      conversationId: "55555555-5555-4555-8555-555555555555",
+      messageId: null,
+      originalFileName: "photo.png",
+      position: 0,
+      thumbnailObjectKey: "ready/thumbnail.webp",
+      purgeAfter: null,
+      status: "READY",
+      declaredContentType: "image/png",
+      declaredSize: 4,
+      detectedContentType: "image/png",
+      actualSize: 4,
+      width: 640,
+      height: 480,
+      incomingObjectKey: "incoming/upload",
+      readyObjectKey: "ready/original.webp",
+      uploadExpiresAt: NOW,
+      readyAt: NOW,
+      createdAt: NOW,
+      updatedAt: NOW,
+    } satisfies AttachmentCleanupCandidate;
+    let query:
+      | { now: Date; unboundReadyBefore: Date; staleBefore: Date; take: number }
+      | undefined;
+    const deleted: string[] = [];
+    const attachmentRepository = {
+      async listCleanupCandidates(
+        now: Date,
+        unboundReadyBefore: Date,
+        staleBefore: Date,
+        take: number,
+      ) {
+        query = { now, unboundReadyBefore, staleBefore, take };
+        return [attachmentCandidate];
+      },
+      async deleteAsset(assetId: string) {
+        deleted.push(assetId);
+        return true;
+      },
+    } as unknown as AttachmentRepository;
+    const service = new AvatarCleanupService(
+      repository,
+      storage,
+      {
+        avatarBucket: "avatars",
+        attachmentBucket: "attachments",
+        staleUploadAgeMs: 3_600_000,
+        unboundAttachmentAgeMs: 86_400_000,
+      },
+      () => NOW,
+      attachmentRepository,
+    );
+
+    const result = await service.runOnce();
+
+    expect(storage.deleted).toEqual([
+      { bucket: "attachments", key: "incoming/upload" },
+      { bucket: "attachments", key: "ready/original.webp" },
+      { bucket: "attachments", key: "ready/thumbnail.webp" },
+    ]);
+    expect(deleted).toEqual([attachmentCandidate.assetId]);
+    expect(query).toEqual({
+      now: NOW,
+      unboundReadyBefore: new Date(NOW.getTime() - 86_400_000),
+      staleBefore: new Date(NOW.getTime() - 3_600_000),
+      take: 100,
+    });
+    expect(result).toEqual({
+      inspected: 1,
+      deletedAssets: 1,
+      clearedIncomingObjects: 1,
+    });
   });
 });

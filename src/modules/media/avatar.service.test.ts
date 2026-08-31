@@ -8,6 +8,8 @@ import type {
   ObjectLocation,
   ObjectStorage,
   PresignPutInput,
+  PresignGetInput,
+  PresignedGetRequest,
   PresignedPutRequest,
   PutStoredObjectInput,
   StoredObject,
@@ -158,6 +160,10 @@ class FakeObjectStorage implements ObjectStorage {
       headers: { "Content-Type": input.contentType },
       expiresAt: new Date(NOW.getTime() + 600_000),
     };
+  }
+
+  async presignGet(_input: PresignGetInput): Promise<PresignedGetRequest> {
+    throw new Error("not used");
   }
 
   async headObject(): Promise<StoredObjectMetadata> {
