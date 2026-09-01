@@ -170,6 +170,7 @@ describe("avatar cleanup service", () => {
       conversationId: "55555555-5555-4555-8555-555555555555",
       messageId: null,
       originalFileName: "photo.png",
+      kind: "IMAGE",
       position: 0,
       thumbnailObjectKey: "ready/thumbnail.webp",
       purgeAfter: null,
@@ -190,14 +191,22 @@ describe("avatar cleanup service", () => {
     let query:
       | { now: Date; unboundReadyBefore: Date; staleBefore: Date; take: number }
       | undefined;
+    let resetBefore: Date | undefined;
+    const lifecycle: string[] = [];
     const deleted: string[] = [];
     const attachmentRepository = {
+      async resetStaleProcessing(staleBefore: Date) {
+        lifecycle.push("reset-processing");
+        resetBefore = staleBefore;
+        return 0;
+      },
       async listCleanupCandidates(
         now: Date,
         unboundReadyBefore: Date,
         staleBefore: Date,
         take: number,
       ) {
+        lifecycle.push("list-candidates");
         query = { now, unboundReadyBefore, staleBefore, take };
         return [attachmentCandidate];
       },
@@ -233,6 +242,8 @@ describe("avatar cleanup service", () => {
       staleBefore: new Date(NOW.getTime() - 3_600_000),
       take: 100,
     });
+    expect(resetBefore).toEqual(new Date(NOW.getTime() - 3_600_000));
+    expect(lifecycle).toEqual(["reset-processing", "list-candidates"]);
     expect(result).toEqual({
       inspected: 1,
       deletedAssets: 1,

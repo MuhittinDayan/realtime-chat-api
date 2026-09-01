@@ -5,7 +5,7 @@ export class UnsupportedAttachmentFormatError extends AppError {
     super({
       statusCode: 400,
       code: "UNSUPPORTED_ATTACHMENT_FORMAT",
-      message: "Attachment format is not supported; use JPEG, PNG, or WebP",
+      message: "Attachment format is not supported; use JPEG, PNG, WebP, or PDF",
     });
     this.name = "UnsupportedAttachmentFormatError";
   }
@@ -71,10 +71,34 @@ export class InvalidAttachmentFileError extends AppError {
     super({
       statusCode: 422,
       code: "INVALID_ATTACHMENT_FILE",
-      message: "The uploaded file is not a valid supported image attachment",
+      message: "The uploaded file is not a valid supported attachment",
       ...(cause === undefined ? {} : { cause }),
     });
     this.name = "InvalidAttachmentFileError";
+  }
+}
+
+export class AttachmentKindMismatchError extends AppError {
+  constructor(cause?: unknown) {
+    super({
+      statusCode: 422,
+      code: "KIND_MISMATCH",
+      message: "The uploaded file kind does not match the upload intent",
+      ...(cause === undefined ? {} : { cause }),
+    });
+    this.name = "AttachmentKindMismatchError";
+  }
+}
+
+export class AttachmentScanUnavailableError extends AppError {
+  constructor(cause?: unknown) {
+    super({
+      statusCode: 503,
+      code: "ATTACHMENT_SCAN_UNAVAILABLE",
+      message: "Attachment malware scanning is temporarily unavailable",
+      ...(cause === undefined ? {} : { cause }),
+    });
+    this.name = "AttachmentScanUnavailableError";
   }
 }
 
@@ -98,5 +122,16 @@ export class AttachmentBindingError extends AppError {
       message: "One or more attachments cannot be bound to the message",
     });
     this.name = "AttachmentBindingError";
+  }
+}
+
+export class MessageAttachmentsTotalSizeExceededError extends AppError {
+  constructor() {
+    super({
+      statusCode: 409,
+      code: "MESSAGE_ATTACHMENTS_TOTAL_SIZE_EXCEEDED",
+      message: "The message attachments exceed the total size limit",
+    });
+    this.name = "MessageAttachmentsTotalSizeExceededError";
   }
 }

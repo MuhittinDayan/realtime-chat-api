@@ -27,7 +27,7 @@ Faz 14a/14b ile S3/R2 uyumlu object-storage temeli, avatar yaşam döngüsü ve 
 | Veritabanı | PostgreSQL |
 | ORM / migration | Prisma 7.9.1 ve PostgreSQL adapter'ı |
 | Nesne depolama | S3/R2 uyumlu katman; yerelde MinIO ve ayrı public-avatar/private-attachment bucket'ları |
-| Görsel işleme | Sharp ile doğrulama, metadata temizleme ve sabit 512×512 WebP üretimi |
+| Görsel/PDF işleme | Sharp görsel dönüşümü; file-type + PDF.js doğrulaması ve ClamAV malware taraması |
 | Kimlik doğrulama | Kısa ömürlü JWT access token + döndürülen opaque refresh token |
 | Parola güvenliği | Argon2id |
 | Girdi doğrulama | Zod |
@@ -128,7 +128,7 @@ Mevcut ana tablolar:
 - `conversations`: `DIRECT` / `GROUP` tipi, başlık ve son mesaj zamanı
 - `conversation_members`: üyelik ve `MEMBER` / `ADMIN` / `OWNER` rolleri
 - `messages`: TEXT/MEDIA mesajı, opsiyonel caption, istemci mesaj kimliği ve düzenlenme/silinme alanları
-- `message_attachments`: private media asset ile conversation/mesaj ilişkisi, sıralama, thumbnail ve purge zamanı
+- `message_attachments`: IMAGE/PDF kind, private media asset ile conversation/mesaj ilişkisi, sıralama, nullable thumbnail ve purge zamanı
 - `message_reads`: kullanıcı başına monoton ilerleyen okundu watermark'ı
 - `auth_sessions`: hash'lenmiş refresh token, nullable user-agent, süre ve iptal bilgisi
 - `media_assets`: avatar veya mesaj eki amacı/durumu, private incoming/ready object anahtarları, doğrulanan boyut/MIME/ölçüler ve sahip ilişkisi
@@ -217,7 +217,7 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 
 - Mesaj düzenleme ve soft-delete DIRECT ve GROUP konuşmalarında gönderen yetkisiyle desteklenir; grup yöneticisinin başka kullanıcının mesajını silmesi kapsam dışıdır.
 - Username/görünen ad profil güncellemesi, avatar yükleme/silme, parola değiştirme, aktif session listesi, belirli session'ı ve mevcut dışındaki tüm session'ları iptal etme hazırdır. Parola sıfırlama ve e-posta doğrulama kapsam dışıdır.
-- Mesaj görseli için private attachment yaşam döngüsü Faz 14b kapsamında hazırdır. PDF/belge, malware taraması ve ham dosya indirme Faz 14c kapsamındadır. Mesaj arama, bildirim, engelleme/raporlama ve moderasyon kapsam dışındadır.
+- Mesaj görseli için private attachment yaşam döngüsü Faz 14b kapsamında; PDF, senkron ClamAV taraması ve attachment-disposition ham indirme Faz 14c kapsamında hazırdır. DOCX/XLSX/PPTX Faz 14d'ye bırakılmıştır. Mesaj arama, bildirim, engelleme/raporlama ve moderasyon kapsam dışındadır.
 
 ### Ölçek ve güvenilirlik
 
@@ -226,13 +226,19 @@ Testler ayrı bir üst klasör yerine ilgili modülün yanında `*.test.ts` olar
 - Veritabanı commit'inden sonra Socket.IO'ya doğrudan yayın yapılıyor. Süreç çökmesi veya publisher hatasında kayıt kalıcı olup event kaybolabilir; outbox/retry mekanizması yok.
 - HTTP mesaj oluşturma ve Socket.IO `typing:set` için süreç içi rate limit vardır; dağıtık kota, genel backpressure ve yük testi henüz yoktur.
 
-### Faz 14a/14b storage kararları ve bilinen sınırlamalar
+### Faz 14a/14b/14c storage kararları ve bilinen sınırlamalar
 
 - Mesaj görselleri private `chat-attachments` bucket'ında tutulur. Upload intent,
   complete, mesaja binding ve her presigned GET üretiminde aktif conversation
   üyeliği ayrı ayrı doğrulanır. Intent verildikten sonra üyelik kaldırılırsa mevcut
   PUT imzası geri alınamaz; complete/binding reddedilir ve nesne cleanup worker'a
   bırakılır.
+- PDF ekleri aynı private bucket ve `MEDIA` mesaj kind'ını kullanır; ek seviyesinde
+  `IMAGE | PDF` ayrımı vardır. PDF magic-byte + parser doğrulamasından ve senkron
+  ClamAV `INSTREAM` taramasından geçmeden READY olamaz. Scanner altyapı hatası
+  kalıcı ret değildir; asset PENDING'e döner ve complete yeniden denenebilir.
+  Yerel Compose periyodik imza güncellemesini otomatikleştirmez; production
+  deployment'ı freshclam schedule, imza yaşı alarmı ve clamd readiness sağlamalıdır.
 - `provision-storage.ts` bucket-level CORS uygulayabilen yardımcıyı içerir ancak
   runtime/deployment akışında bu fonksiyon çağrılmaz; yerel MinIO global CORS
   davranışına dayanır. Production storage kurulumu `chat-attachments` için izinli

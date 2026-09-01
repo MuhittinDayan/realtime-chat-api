@@ -143,6 +143,8 @@ export class S3ObjectStorage implements ObjectStorage {
     const command = new GetObjectCommand({
       Bucket: input.bucket,
       Key: input.key,
+      ResponseContentDisposition: input.responseContentDisposition,
+      ResponseContentType: input.responseContentType,
     });
     const url = await this.signedUrlFactory(this.client, command, {
       expiresIn: input.expiresInSeconds,

@@ -57,6 +57,13 @@ enum MediaStatus {
   @@map("media_status")
 }
 
+enum AttachmentKind {
+  IMAGE
+  PDF
+
+  @@map("attachment_kind")
+}
+
 model User {
   id            String     @id @default(uuid()) @db.Uuid
   email         String     @unique(map: "users_email_key") @db.VarChar(320)
@@ -172,6 +179,7 @@ model MessageAttachment {
   conversationId     String    @map("conversation_id") @db.Uuid
   messageId          String?   @map("message_id") @db.Uuid
   originalFileName   String    @map("original_file_name") @db.Text
+  kind               AttachmentKind
   position           Int       @default(0)
   thumbnailObjectKey String?   @unique(map: "message_attachments_thumbnail_object_key_key") @map("thumbnail_object_key") @db.Text
   purgeAfter         DateTime? @map("purge_after") @db.Timestamptz(3)

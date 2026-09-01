@@ -39,11 +39,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Start PostgreSQL and MinIO, then apply test migrations
+      - name: Start PostgreSQL, MinIO, and ClamAV, then apply test migrations
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/chat_test
         run: |
-          docker compose up -d --wait postgres minio
+          docker compose up -d --wait postgres minio clamav
           npm run setup:storage
           docker compose exec -T postgres createdb -U postgres chat_test
           npm run prisma:migrate:deploy
@@ -64,7 +64,7 @@ jobs:
 
       - name: Show service logs on failure
         if: failure()
-        run: docker compose logs postgres minio
+        run: docker compose logs postgres minio clamav
 
       - name: Stop local services
         if: always()

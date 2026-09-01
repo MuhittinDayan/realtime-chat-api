@@ -390,8 +390,10 @@ describe("message lifecycle service", () => {
         {
           id: "99999999-9999-4999-8999-999999999999",
           conversationId: CONVERSATION_ID,
+          kind: "IMAGE",
           originalFileName: "photo.png",
           position: 0,
+          actualSize: 4,
           detectedContentType: "image/png",
           width: 640,
           height: 480,
@@ -547,8 +549,10 @@ describe("message lifecycle service", () => {
         {
           id: "99999999-9999-4999-8999-999999999999",
           conversationId: CONVERSATION_ID,
+          kind: "IMAGE",
           originalFileName: "photo.png",
           position: 0,
+          actualSize: 4,
           detectedContentType: "image/png",
           width: 640,
           height: 480,

@@ -1208,9 +1208,9 @@ paths:
   /api/v1/conversations/{conversationId}/attachments/uploads:
     post:
       tags: [Messages]
-      summary: Mesaj görseli için private upload intent oluşturma
+      summary: Mesaj görseli veya PDF'i için private upload intent oluşturma
       operationId: createMessageAttachmentUpload
-      description: Aktif konuşma üyeliği doğrulanır; JPEG, PNG veya WebP kaynak en fazla 10 MiB olabilir.
+      description: Aktif konuşma üyeliği doğrulanır; JPEG/PNG/WebP en fazla 10 MiB, PDF en fazla 25 MiB olabilir.
       security:
         - bearerAuth: []
       parameters:
@@ -1245,9 +1245,9 @@ paths:
   /api/v1/conversations/{conversationId}/attachments/uploads/{attachmentId}/complete:
     post:
       tags: [Messages]
-      summary: Yüklenen mesaj görselini doğrulama ve işleme
+      summary: Yüklenen mesaj görselini veya PDF'i doğrulama ve işleme
       operationId: completeMessageAttachmentUpload
-      description: Kaynak doğrulanır; crop olmadan private WebP asıl ve thumbnail üretilir, raw incoming silinir.
+      description: Görseller private WebP asıl ve thumbnail'e işlenir. PDF magic-byte ve parser ile doğrulanır, ClamAV ile taranır ve aynı byte dizisi private ready object'e alınır. Başarılı complete sonunda raw incoming silinir.
       security:
         - bearerAuth: []
       parameters:
@@ -1255,7 +1255,7 @@ paths:
         - $ref: "#/components/parameters/AttachmentId"
       responses:
         "200":
-          description: Mesaja bağlanmaya hazır görsel metadata'sı
+          description: Mesaja bağlanmaya hazır görsel veya PDF metadata'sı
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -1277,18 +1277,21 @@ paths:
         "409":
           description: Upload süresi doldu, tamamlanmadı veya durumu çakışıyor
         "422":
-          description: Yüklenen nesne desteklenen geçerli bir görsel değil
+          description: Yüklenen nesne geçersiz, şifreli, zararlı veya intent kind/MIME değeriyle uyumsuz (`INVALID_ATTACHMENT_FILE` veya `KIND_MISMATCH`)
         "429":
           $ref: "#/components/responses/RateLimited"
         "503":
-          $ref: "#/components/responses/AttachmentStorageUnavailable"
+          $ref: "#/components/responses/AttachmentProcessingUnavailable"
 
   /api/v1/conversations/{conversationId}/attachments/{attachmentId}/{variant}:
     get:
       tags: [Messages]
-      summary: Private mesaj görseli için kısa ömürlü indirme yönlendirmesi
+      summary: Private mesaj eki için kısa ömürlü indirme yönlendirmesi
       operationId: accessMessageAttachment
-      description: Aktif üyelik ve bağlı mesajın silinmemiş olduğu doğrulanır; yeni presigned GET ile 307 dönülür.
+      description: >-
+        Aktif üyelik ve bağlı mesajın silinmemiş olduğu doğrulanır; yeni presigned
+        GET ile 307 dönülür. PDF yalnızca original variant ile ve
+        `Content-Disposition: attachment` olarak indirilir.
       security:
         - bearerAuth: []
       parameters:
@@ -1387,6 +1390,8 @@ paths:
           $ref: "#/components/responses/BearerUnauthorized"
         "404":
           $ref: "#/components/responses/ConversationNotFound"
+        "409":
+          description: Attachment binding çakıştı veya doğrulanmış toplam ek boyutu 50 MiB sınırını aştı (`ATTACHMENT_BINDING_CONFLICT` veya `MESSAGE_ATTACHMENTS_TOTAL_SIZE_EXCEEDED`)
         "413":
           $ref: "#/components/responses/PayloadTooLarge"
         "429":
@@ -1726,6 +1731,25 @@ components:
               code: ATTACHMENT_STORAGE_UNAVAILABLE
               message: Attachment storage is temporarily unavailable
               requestId: 77777777-7777-4777-8777-777777777777
+    AttachmentProcessingUnavailable:
+      description: Attachment storage veya malware scanner geçici olarak kullanılamıyor; scanner hatası kalıcı ret değildir ve complete yeniden denenebilir
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            storageUnavailable:
+              value:
+                error:
+                  code: ATTACHMENT_STORAGE_UNAVAILABLE
+                  message: Attachment storage is temporarily unavailable
+                  requestId: 77777777-7777-4777-8777-777777777777
+            scanUnavailable:
+              value:
+                error:
+                  code: ATTACHMENT_SCAN_UNAVAILABLE
+                  message: Attachment malware scanning is temporarily unavailable
+                  requestId: 77777777-7777-4777-8777-777777777777
     AvatarStorageUnavailable:
       description: Object storage geçici olarak kullanılamıyor
       content:
@@ -2399,6 +2423,7 @@ components:
           minItems: 1
           maxItems: 4
           uniqueItems: true
+          description: IMAGE ve PDF birlikte kullanılabilir; doğrulanmış actualSize toplamı en fazla 52428800 byte olabilir.
           items:
             type: string
             format: uuid
@@ -2421,11 +2446,12 @@ components:
       properties:
         contentType:
           type: string
-          enum: [image/jpeg, image/png, image/webp]
+          enum: [image/jpeg, image/png, image/webp, application/pdf]
         contentLength:
           type: integer
           minimum: 1
-          maximum: 10485760
+          maximum: 26214400
+          description: IMAGE için en fazla 10485760, PDF için en fazla 26214400 byte.
         originalFileName:
           type: string
           minLength: 1
@@ -2458,13 +2484,22 @@ components:
           type: string
           format: date-time
     MessageAttachment:
+      oneOf:
+        - $ref: "#/components/schemas/ImageMessageAttachment"
+        - $ref: "#/components/schemas/PdfMessageAttachment"
+      discriminator:
+        propertyName: kind
+    ImageMessageAttachment:
       type: object
       additionalProperties: false
-      required: [id, originalFileName, contentType, width, height, url, thumbnailUrl]
+      required: [id, kind, originalFileName, contentType, width, height, url, thumbnailUrl]
       properties:
         id:
           type: string
           format: uuid
+        kind:
+          type: string
+          const: IMAGE
         originalFileName:
           type: string
         contentType:
@@ -2479,6 +2514,24 @@ components:
         url:
           type: string
         thumbnailUrl:
+          type: string
+    PdfMessageAttachment:
+      type: object
+      additionalProperties: false
+      required: [id, kind, originalFileName, contentType, url]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          const: PDF
+        originalFileName:
+          type: string
+        contentType:
+          type: string
+          const: application/pdf
+        url:
           type: string
     Message:
       oneOf:

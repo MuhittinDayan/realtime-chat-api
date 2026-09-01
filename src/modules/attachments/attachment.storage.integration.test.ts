@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { env } from "../../config/env.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
 import {
   objectStorage,
@@ -19,6 +20,8 @@ import { MessageService } from "../messages/message.service.js";
 import { SharpAttachmentImageProcessor } from "./attachment-image.processor.js";
 import { PrismaAttachmentRepository } from "./attachment.repository.js";
 import { AttachmentService } from "./attachment.service.js";
+import { PdfJsAttachmentPdfProcessor } from "./attachment-pdf.processor.js";
+import { ClamAvAttachmentScanner } from "./clamav-scanner.js";
 import { AvatarCleanupService } from "../media/avatar-cleanup.service.js";
 import { PrismaAvatarRepository } from "../media/avatar.repository.js";
 
@@ -31,7 +34,10 @@ const MESSAGE_IDEMPOTENCY_KEY = "75000000-0000-4000-8000-000000000001";
 const NOW = new Date("2030-01-01T00:00:00.000Z");
 const incomingKey = `incoming/${ALICE_ID}/${ASSET_ID}`;
 const originalKey = `ready/${ALICE_ID}/${ASSET_ID}/original.webp`;
+const pdfOriginalKey = `ready/${ALICE_ID}/${ASSET_ID}/original.pdf`;
 const thumbnailKey = `ready/${ALICE_ID}/${ASSET_ID}/thumbnail.webp`;
+const itWithUnavailableClamAv =
+  process.env.EXPECT_CLAMAV_UNAVAILABLE === "true" ? it : it.skip;
 
 async function cleanFixture(): Promise<void> {
   await prisma.messageRead.deleteMany({
@@ -41,7 +47,10 @@ async function cleanFixture(): Promise<void> {
     where: { conversationId: CONVERSATION_ID },
   });
   await prisma.mediaAsset.deleteMany({
-    where: { id: ASSET_ID },
+    where: {
+      ownerId: { in: [ALICE_ID, BOB_ID] },
+      purpose: "MESSAGE_ATTACHMENT",
+    },
   });
   await prisma.conversationMember.deleteMany({
     where: { conversationId: CONVERSATION_ID },
@@ -53,7 +62,7 @@ async function cleanFixture(): Promise<void> {
     where: { id: { in: [ALICE_ID, BOB_ID] } },
   });
   await Promise.all(
-    [incomingKey, originalKey, thumbnailKey].map((key) =>
+    [incomingKey, originalKey, pdfOriginalKey, thumbnailKey].map((key) =>
       objectStorage.deleteObject({
         bucket: storageBuckets.attachment,
         key,
@@ -122,6 +131,14 @@ function createServices() {
     },
     () => NOW,
     () => ids.shift() ?? ASSET_ID,
+    new PdfJsAttachmentPdfProcessor(),
+    new ClamAvAttachmentScanner({
+      host: env.CLAMAV_HOST,
+      port: env.CLAMAV_PORT,
+      timeoutMs: env.CLAMAV_SCAN_TIMEOUT_MS,
+      maxConcurrentScans: env.CLAMAV_MAX_CONCURRENT_SCANS,
+      streamMaxLengthBytes: env.CLAMAV_STREAM_MAX_LENGTH_BYTES,
+    }),
   );
   const messageService = new MessageService(
     new PrismaMessageRepository(prisma),
@@ -136,7 +153,7 @@ function createServices() {
   return { attachmentService, messageService };
 }
 
-describe("phase 14b real PostgreSQL and MinIO behavior", () => {
+describe("phase 14b/14c real PostgreSQL, MinIO, and ClamAV behavior", () => {
   it("uploads, processes, binds and reads a private image attachment", async () => {
     const source = await sharp({
       create: {
@@ -221,7 +238,10 @@ describe("phase 14b real PostgreSQL and MinIO behavior", () => {
       sharp(new Uint8Array(await originalResponse.arrayBuffer())).metadata(),
     ]);
 
-    expect(completed.thumbnailUrl).toContain(`/${ATTACHMENT_ID}/thumbnail`);
+    expect(completed.kind).toBe("IMAGE");
+    expect(completed.kind === "IMAGE" ? completed.thumbnailUrl : null).toContain(
+      `/${ATTACHMENT_ID}/thumbnail`,
+    );
     expect(created).toMatchObject({
       created: true,
       message: {
@@ -332,6 +352,226 @@ describe("phase 14b real PostgreSQL and MinIO behavior", () => {
     ).resolves.toBeNull();
   });
 
+  it("uploads, scans, binds and downloads a private PDF attachment", async () => {
+    const source = buildMinimalPdf();
+    const { attachmentService, messageService } = createServices();
+    const intent = await attachmentService.createUpload(
+      ALICE_ID,
+      CONVERSATION_ID,
+      {
+        contentType: "application/pdf",
+        contentLength: source.byteLength,
+        originalFileName: "güvenli rapor.pdf",
+      },
+    );
+    const uploaded = await fetch(intent.upload.url, {
+      method: intent.upload.method,
+      headers: intent.upload.headers,
+      body: source,
+    });
+    expect(uploaded.ok).toBe(true);
+
+    const completed = await attachmentService.completeUpload(
+      ALICE_ID,
+      CONVERSATION_ID,
+      ATTACHMENT_ID,
+    );
+    expect(completed).toMatchObject({
+      kind: "PDF",
+      contentType: "application/pdf",
+    });
+    await messageService.createMessage(ALICE_ID, CONVERSATION_ID, {
+      clientMessageId: MESSAGE_IDEMPOTENCY_KEY,
+      content: { type: "media", attachmentIds: [ATTACHMENT_ID] },
+    });
+
+    const access = await attachmentService.createAccess(
+      BOB_ID,
+      CONVERSATION_ID,
+      ATTACHMENT_ID,
+      "original",
+    );
+    const downloaded = await fetch(access.url);
+
+    expect(downloaded.ok).toBe(true);
+    expect(downloaded.headers.get("content-type")).toContain("application/pdf");
+    expect(downloaded.headers.get("content-disposition")).toContain(
+      "attachment",
+    );
+    expect(new Uint8Array(await downloaded.arrayBuffer())).toEqual(source);
+    await expect(
+      prisma.messageAttachment.findUniqueOrThrow({
+        where: { id: ATTACHMENT_ID },
+        select: {
+          kind: true,
+          thumbnailObjectKey: true,
+          asset: { select: { status: true, width: true, height: true } },
+        },
+      }),
+    ).resolves.toEqual({
+      kind: "PDF",
+      thumbnailObjectKey: null,
+      asset: { status: "READY", width: null, height: null },
+    });
+  });
+
+  it("marks an EICAR-bearing PDF as REJECTED", async () => {
+    const source = buildMinimalPdf(
+      "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+    );
+    const { attachmentService } = createServices();
+    const intent = await attachmentService.createUpload(
+      ALICE_ID,
+      CONVERSATION_ID,
+      {
+        contentType: "application/pdf",
+        contentLength: source.byteLength,
+        originalFileName: "eicar.pdf",
+      },
+    );
+    await fetch(intent.upload.url, {
+      method: intent.upload.method,
+      headers: intent.upload.headers,
+      body: source,
+    });
+
+    await expect(
+      attachmentService.completeUpload(
+        ALICE_ID,
+        CONVERSATION_ID,
+        ATTACHMENT_ID,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ATTACHMENT_FILE" });
+    await expect(
+      prisma.mediaAsset.findUniqueOrThrow({
+        where: { id: ASSET_ID },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: "REJECTED" });
+  });
+
+  itWithUnavailableClamAv(
+    "returns 503 without rejecting the asset when clamd is stopped",
+    async () => {
+      const source = buildMinimalPdf();
+      const { attachmentService } = createServices();
+      const intent = await attachmentService.createUpload(
+        ALICE_ID,
+        CONVERSATION_ID,
+        {
+          contentType: "application/pdf",
+          contentLength: source.byteLength,
+          originalFileName: "retry.pdf",
+        },
+      );
+      await fetch(intent.upload.url, {
+        method: intent.upload.method,
+        headers: intent.upload.headers,
+        body: source,
+      });
+
+      await expect(
+        attachmentService.completeUpload(
+          ALICE_ID,
+          CONVERSATION_ID,
+          ATTACHMENT_ID,
+        ),
+      ).rejects.toMatchObject({
+        statusCode: 503,
+        code: "ATTACHMENT_SCAN_UNAVAILABLE",
+      });
+      await expect(
+        prisma.mediaAsset.findUniqueOrThrow({
+          where: { id: ASSET_ID },
+          select: { status: true },
+        }),
+      ).resolves.toEqual({ status: "PENDING" });
+    },
+  );
+
+  it.each([
+    ["encrypted", buildMinimalPdf("", true)],
+    ["corrupt", new TextEncoder().encode("%PDF-1.7\nnot a PDF\n%%EOF\n")],
+  ])("marks a %s PDF as REJECTED", async (_label, source) => {
+    const { attachmentService } = createServices();
+    const intent = await attachmentService.createUpload(
+      ALICE_ID,
+      CONVERSATION_ID,
+      {
+        contentType: "application/pdf",
+        contentLength: source.byteLength,
+        originalFileName: "invalid.pdf",
+      },
+    );
+    await fetch(intent.upload.url, {
+      method: intent.upload.method,
+      headers: intent.upload.headers,
+      body: source,
+    });
+
+    await expect(
+      attachmentService.completeUpload(
+        ALICE_ID,
+        CONVERSATION_ID,
+        ATTACHMENT_ID,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ATTACHMENT_FILE" });
+    await expect(
+      prisma.mediaAsset.findUniqueOrThrow({
+        where: { id: ASSET_ID },
+        select: { status: true },
+      }),
+    ).resolves.toEqual({ status: "REJECTED" });
+  });
+
+  it("rejects a real binding transaction above 50 MiB actual size", async () => {
+    const attachmentIds = [
+      "76000000-0000-4000-8000-000000000001",
+      "76000000-0000-4000-8000-000000000002",
+      "76000000-0000-4000-8000-000000000003",
+    ];
+
+    for (const [index, attachmentId] of attachmentIds.entries()) {
+      await prisma.mediaAsset.create({
+        data: {
+          id: `77000000-0000-4000-8000-00000000000${String(index + 1)}`,
+          ownerId: ALICE_ID,
+          purpose: "MESSAGE_ATTACHMENT",
+          status: "READY",
+          declaredContentType: "application/pdf",
+          declaredSize: 20 * 1_024 * 1_024,
+          detectedContentType: "application/pdf",
+          actualSize: 20 * 1_024 * 1_024,
+          readyObjectKey: `ready/${ALICE_ID}/seed-${String(index)}/original.pdf`,
+          uploadExpiresAt: NOW,
+          readyAt: NOW,
+          messageAttachment: {
+            create: {
+              id: attachmentId,
+              conversationId: CONVERSATION_ID,
+              kind: "PDF",
+              originalFileName: `seed-${String(index)}.pdf`,
+            },
+          },
+        },
+      });
+    }
+
+    await expect(
+      new PrismaMessageRepository(prisma).createMessage({
+        conversationId: CONVERSATION_ID,
+        senderId: ALICE_ID,
+        clientMessageId: MESSAGE_IDEMPOTENCY_KEY,
+        kind: "MEDIA",
+        body: null,
+        attachmentIds,
+      }),
+    ).rejects.toMatchObject({
+      code: "MESSAGE_ATTACHMENTS_TOTAL_SIZE_EXCEEDED",
+    });
+    await expect(prisma.message.count()).resolves.toBe(0);
+  });
+
   it("rechecks membership inside the media binding transaction", async () => {
     await prisma.mediaAsset.create({
       data: {
@@ -352,6 +592,7 @@ describe("phase 14b real PostgreSQL and MinIO behavior", () => {
           create: {
             id: ATTACHMENT_ID,
             conversationId: CONVERSATION_ID,
+            kind: "IMAGE",
             originalFileName: "photo.png",
             thumbnailObjectKey: thumbnailKey,
           },
@@ -474,6 +715,63 @@ describe("phase 14b real PostgreSQL and MinIO behavior", () => {
     ).rejects.toBeInstanceOf(StorageObjectNotFoundError);
   });
 
+  it("recovers and purges a stale PROCESSING attachment", async () => {
+    const staleBefore = new Date(
+      NOW.getTime() - storageSettings.staleUploadAgeMs - 1,
+    );
+    await objectStorage.putObject({
+      bucket: storageBuckets.attachment,
+      key: incomingKey,
+      body: buildMinimalPdf(),
+      contentType: "application/pdf",
+    });
+    await prisma.mediaAsset.create({
+      data: {
+        id: ASSET_ID,
+        ownerId: ALICE_ID,
+        purpose: "MESSAGE_ATTACHMENT",
+        status: "PROCESSING",
+        declaredContentType: "application/pdf",
+        declaredSize: 4,
+        incomingObjectKey: incomingKey,
+        readyObjectKey: pdfOriginalKey,
+        uploadExpiresAt: staleBefore,
+        updatedAt: staleBefore,
+        messageAttachment: {
+          create: {
+            id: ATTACHMENT_ID,
+            conversationId: CONVERSATION_ID,
+            kind: "PDF",
+            originalFileName: "stale.pdf",
+          },
+        },
+      },
+    });
+    const cleanup = new AvatarCleanupService(
+      new PrismaAvatarRepository(prisma),
+      objectStorage,
+      {
+        avatarBucket: storageBuckets.avatar,
+        attachmentBucket: storageBuckets.attachment,
+        staleUploadAgeMs: storageSettings.staleUploadAgeMs,
+        unboundAttachmentAgeMs: storageSettings.unboundAttachmentAgeMs,
+      },
+      () => NOW,
+      new PrismaAttachmentRepository(prisma),
+    );
+
+    await expect(cleanup.runOnce()).resolves.toMatchObject({ deletedAssets: 1 });
+    await expect(
+      prisma.mediaAsset.findUnique({ where: { id: ASSET_ID } }),
+    ).resolves.toBeNull();
+    await expect(
+      objectStorage.headObject({
+        bucket: storageBuckets.attachment,
+        key: incomingKey,
+      }),
+    ).rejects.toBeInstanceOf(StorageObjectNotFoundError);
+  });
+
   it("enforces the attachment count again inside the media transaction", async () => {
     await expect(
       new PrismaMessageRepository(prisma).createMessage({
@@ -488,3 +786,46 @@ describe("phase 14b real PostgreSQL and MinIO behavior", () => {
     await expect(prisma.message.count()).resolves.toBe(0);
   });
 });
+
+function buildMinimalPdf(content = "", encrypted = false): Uint8Array {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> /Contents 4 0 R >>",
+    `<< /Length ${String(Buffer.byteLength(content))} >>\nstream\n${content}\nendstream`,
+    ...(encrypted
+      ? [
+          "<< /Filter /Standard /V 1 /R 2 " +
+            "/O <0000000000000000000000000000000000000000000000000000000000000000> " +
+            "/U <0000000000000000000000000000000000000000000000000000000000000000> " +
+            "/P -4 >>",
+        ]
+      : []),
+  ];
+  const offsets = [0];
+  let source = "%PDF-1.4\n";
+
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(source));
+    source += `${String(index + 1)} 0 obj\n${object}\nendobj\n`;
+  }
+
+  const xrefOffset = Buffer.byteLength(source);
+  source += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+
+  for (const offset of offsets.slice(1)) {
+    source += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+
+  const encryptionTrailer = encrypted
+    ? " /Encrypt 5 0 R " +
+      "/ID [<00112233445566778899AABBCCDDEEFF>" +
+      "<00112233445566778899AABBCCDDEEFF>]"
+    : "";
+  source +=
+    `trailer\n<< /Size ${String(objects.length + 1)} ` +
+    `/Root 1 0 R${encryptionTrailer} >>\n` +
+    `startxref\n${String(xrefOffset)}\n%%EOF\n`;
+
+  return new TextEncoder().encode(source);
+}

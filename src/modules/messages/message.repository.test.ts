@@ -212,4 +212,46 @@ describe("Prisma message repository", () => {
       }),
     );
   });
+
+  it("rejects a MEDIA binding above 50 MiB using verified actual sizes", async () => {
+    const create = vi.fn();
+    const transactionClient = {
+      conversationMember: {
+        findUnique: vi.fn().mockResolvedValue({ leftAt: null }),
+      },
+      messageAttachment: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "55555555-5555-4555-8555-555555555555", asset: { actualSize: 26 * 1_024 * 1_024 } },
+          { id: "66666666-6666-4666-8666-666666666666", asset: { actualSize: 25 * 1_024 * 1_024 } },
+        ]),
+      },
+      message: { create },
+    };
+    const client = {
+      message: { findUnique: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn(
+        async (callback: (transaction: typeof transactionClient) => unknown) =>
+          callback(transactionClient),
+      ),
+    } as unknown as PrismaClient;
+    const repository = new PrismaMessageRepository(client);
+
+    await expect(
+      repository.createMessage({
+        conversationId: CONVERSATION_ID,
+        senderId: ALICE_ID,
+        clientMessageId: CLIENT_MESSAGE_ID,
+        kind: "MEDIA",
+        body: null,
+        attachmentIds: [
+          "55555555-5555-4555-8555-555555555555",
+          "66666666-6666-4666-8666-666666666666",
+        ],
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      code: "MESSAGE_ATTACHMENTS_TOTAL_SIZE_EXCEEDED",
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
 });

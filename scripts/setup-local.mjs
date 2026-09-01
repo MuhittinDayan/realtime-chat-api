@@ -87,7 +87,7 @@ run("docker", [
   "up",
   "-d",
   "--wait",
-  ...(storageOnly ? ["minio"] : ["postgres", "minio"]),
+  ...(storageOnly ? ["minio"] : ["postgres", "minio", "clamav"]),
 ]);
 setupStorage();
 
@@ -142,5 +142,5 @@ runNpmScript("prisma:migrate:deploy", {
 runNpmScript("prisma:seed");
 
 console.info(
-  "Local PostgreSQL, object storage, migrations, test database, and seed are ready.",
+  "Local PostgreSQL, object storage, ClamAV, migrations, test database, and seed are ready.",
 );

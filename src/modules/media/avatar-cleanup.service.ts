@@ -73,10 +73,15 @@ export class AvatarCleanupService {
       return [];
     }
 
+    const staleBefore = new Date(
+      now.getTime() - this.config.staleUploadAgeMs,
+    );
+    await this.attachmentRepository.resetStaleProcessing(staleBefore);
+
     return this.attachmentRepository.listCleanupCandidates(
       now,
       new Date(now.getTime() - this.config.unboundAttachmentAgeMs),
-      new Date(now.getTime() - this.config.staleUploadAgeMs),
+      staleBefore,
       this.config.batchSize ?? 100,
     );
   }
