@@ -228,13 +228,7 @@ function toMessageDto(message: MessageRecord): MessageDto {
 function toMessageAttachmentDto(
   attachment: MessageRecord["attachments"][number],
 ): MessageAttachmentDto {
-  if (
-    attachment.detectedContentType === null ||
-    attachment.width === null ||
-    attachment.height === null ||
-    attachment.readyObjectKey === null ||
-    attachment.thumbnailObjectKey === null
-  ) {
+  if (attachment.readyObjectKey === null) {
     throw new Error("Ready message attachment metadata is incomplete");
   }
 
@@ -242,8 +236,31 @@ function toMessageAttachmentDto(
     `/api/v1/conversations/${attachment.conversationId}` +
     `/attachments/${attachment.id}`;
 
+  if (attachment.kind === "PDF") {
+    if (attachment.detectedContentType !== "application/pdf") {
+      throw new Error("Ready PDF attachment metadata is incomplete");
+    }
+
+    return {
+      id: attachment.id,
+      kind: "PDF",
+      originalFileName: attachment.originalFileName,
+      contentType: "application/pdf",
+      url: `${basePath}/original`,
+    };
+  }
+
+  if (
+    attachment.width === null ||
+    attachment.height === null ||
+    attachment.thumbnailObjectKey === null
+  ) {
+    throw new Error("Ready image attachment metadata is incomplete");
+  }
+
   return {
     id: attachment.id,
+    kind: "IMAGE",
     originalFileName: attachment.originalFileName,
     contentType: "image/webp",
     width: attachment.width,

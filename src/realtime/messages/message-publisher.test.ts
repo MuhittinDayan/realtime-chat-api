@@ -16,6 +16,7 @@ const message: MediaMessageDto = {
   attachments: [
     {
       id: "55555555-5555-4555-8555-555555555555",
+      kind: "IMAGE",
       originalFileName: "photo.png",
       contentType: "image/webp",
       width: 1_600,

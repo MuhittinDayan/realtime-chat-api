@@ -5,15 +5,24 @@ import {
 import type { MessageKind } from "../../generated/prisma/enums.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
 import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
-import { AttachmentBindingError } from "../attachments/attachment.errors.js";
-import { MAX_ATTACHMENTS_PER_MESSAGE } from "../attachments/attachment.constants.js";
+import {
+  AttachmentBindingError,
+  MessageAttachmentsTotalSizeExceededError,
+} from "../attachments/attachment.errors.js";
+import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES,
+} from "../attachments/attachment.constants.js";
+import type { AttachmentKind } from "../attachments/attachment.constants.js";
 import type { MessageHistoryCursor } from "./message.schema.js";
 
 export interface MessageAttachmentRecord {
   id: string;
   conversationId: string;
   originalFileName: string;
+  kind: AttachmentKind;
   position: number;
+  actualSize: number | null;
   detectedContentType: string | null;
   width: number | null;
   height: number | null;
@@ -107,11 +116,13 @@ const messageSelect = {
       id: true,
       conversationId: true,
       originalFileName: true,
+      kind: true,
       position: true,
       thumbnailObjectKey: true,
       asset: {
         select: {
           detectedContentType: true,
+          actualSize: true,
           width: true,
           height: true,
           readyObjectKey: true,
@@ -132,9 +143,11 @@ function toMessageRecord(message: SelectedMessage): MessageRecord {
       id: attachment.id,
       conversationId: attachment.conversationId,
       originalFileName: attachment.originalFileName,
+      kind: attachment.kind,
       position: attachment.position,
       thumbnailObjectKey: attachment.thumbnailObjectKey,
       detectedContentType: attachment.asset.detectedContentType,
+      actualSize: attachment.asset.actualSize,
       width: attachment.asset.width,
       height: attachment.asset.height,
       readyObjectKey: attachment.asset.readyObjectKey,
@@ -211,11 +224,31 @@ export class PrismaMessageRepository implements MessageRepository {
                     status: "READY",
                   },
                 },
-                select: { id: true },
+                select: {
+                  id: true,
+                  asset: { select: { actualSize: true } },
+                },
               });
 
             if (availableAttachments.length !== input.attachmentIds.length) {
               throw new AttachmentBindingError();
+            }
+
+            const actualSizes = availableAttachments.map(
+              (attachment) => attachment.asset.actualSize,
+            );
+
+            if (actualSizes.some((size) => size === null)) {
+              throw new AttachmentBindingError();
+            }
+
+            const totalSize = actualSizes.reduce<number>(
+              (total, size) => total + (size ?? 0),
+              0,
+            );
+
+            if (totalSize > MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES) {
+              throw new MessageAttachmentsTotalSizeExceededError();
             }
           }
 

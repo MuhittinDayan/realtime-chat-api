@@ -3,7 +3,10 @@ import {
   type PrismaClient,
 } from "../../generated/prisma/client.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
-import type { AttachmentContentType } from "./attachment.constants.js";
+import type {
+  AttachmentContentType,
+  AttachmentKind,
+} from "./attachment.constants.js";
 
 export type AttachmentAssetStatus =
   | "PENDING"
@@ -19,6 +22,7 @@ export interface AttachmentRecord {
   conversationId: string;
   messageId: string | null;
   originalFileName: string;
+  kind: AttachmentKind;
   position: number;
   thumbnailObjectKey: string | null;
   purgeAfter: Date | null;
@@ -45,11 +49,12 @@ export interface CreatePendingAttachmentData {
   ownerId: string;
   conversationId: string;
   originalFileName: string;
+  kind: AttachmentKind;
   declaredContentType: AttachmentContentType;
   declaredSize: number;
   incomingObjectKey: string;
   readyObjectKey: string;
-  thumbnailObjectKey: string;
+  thumbnailObjectKey: string | null;
   uploadExpiresAt: Date;
 }
 
@@ -60,8 +65,8 @@ export interface CompleteAttachmentData {
   conversationId: string;
   detectedContentType: AttachmentContentType;
   actualSize: number;
-  width: number;
-  height: number;
+  width: number | null;
+  height: number | null;
   readyAt: Date;
 }
 
@@ -91,6 +96,7 @@ export interface AttachmentRepository {
     now: Date,
   ): Promise<AttachmentClaimResult>;
   releaseProcessing(ownerId: string, assetId: string, now: Date): Promise<void>;
+  releaseProcessingForRetry(ownerId: string, assetId: string): Promise<boolean>;
   markRejected(ownerId: string, assetId: string): Promise<void>;
   completeAttachment(
     data: CompleteAttachmentData,
@@ -106,6 +112,7 @@ export interface AttachmentRepository {
     staleBefore: Date,
     take: number,
   ): Promise<readonly AttachmentCleanupCandidate[]>;
+  resetStaleProcessing(staleBefore: Date): Promise<number>;
   deleteAsset(assetId: string): Promise<boolean>;
 }
 
@@ -115,6 +122,7 @@ const attachmentSelect = {
   conversationId: true,
   messageId: true,
   originalFileName: true,
+  kind: true,
   position: true,
   thumbnailObjectKey: true,
   purgeAfter: true,
@@ -150,6 +158,7 @@ function toAttachmentRecord(record: SelectedAttachment): AttachmentRecord {
     conversationId: record.conversationId,
     messageId: record.messageId,
     originalFileName: record.originalFileName,
+    kind: record.kind,
     position: record.position,
     thumbnailObjectKey: record.thumbnailObjectKey,
     purgeAfter: record.purgeAfter,
@@ -218,6 +227,7 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
           assetId: data.assetId,
           conversationId: data.conversationId,
           originalFileName: data.originalFileName,
+          kind: data.kind,
           thumbnailObjectKey: data.thumbnailObjectKey,
         },
         select: attachmentSelect,
@@ -300,6 +310,23 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
       },
       data: { status: "PENDING" },
     });
+  }
+
+  async releaseProcessingForRetry(
+    ownerId: string,
+    assetId: string,
+  ): Promise<boolean> {
+    const released = await this.client.mediaAsset.updateMany({
+      where: {
+        id: assetId,
+        ownerId,
+        purpose: "MESSAGE_ATTACHMENT",
+        status: "PROCESSING",
+      },
+      data: { status: "PENDING" },
+    });
+
+    return released.count === 1;
   }
 
   async markRejected(ownerId: string, assetId: string): Promise<void> {
@@ -424,6 +451,19 @@ export class PrismaAttachmentRepository implements AttachmentRepository {
     });
 
     return attachments.map(toAttachmentRecord);
+  }
+
+  async resetStaleProcessing(staleBefore: Date): Promise<number> {
+    const reset = await this.client.mediaAsset.updateMany({
+      where: {
+        purpose: "MESSAGE_ATTACHMENT",
+        status: "PROCESSING",
+        updatedAt: { lte: staleBefore },
+      },
+      data: { status: "PENDING" },
+    });
+
+    return reset.count;
   }
 
   async deleteAsset(assetId: string): Promise<boolean> {

@@ -11,7 +11,10 @@ import {
   AttachmentController,
   type AttachmentHttpService,
 } from "./attachment.controller.js";
-import { MAX_ATTACHMENT_BYTES } from "./attachment.constants.js";
+import {
+  MAX_IMAGE_ATTACHMENT_BYTES,
+  MAX_PDF_ATTACHMENT_BYTES,
+} from "./attachment.constants.js";
 import { createAttachmentRouter } from "./attachment.routes.js";
 import type { CreateAttachmentUploadInput } from "./attachment.schema.js";
 
@@ -52,6 +55,7 @@ class FakeAttachmentService implements AttachmentHttpService {
     this.completed = true;
     return {
       id: ATTACHMENT_ID,
+      kind: "IMAGE" as const,
       originalFileName: "photo.png",
       contentType: "image/webp" as const,
       width: 1_600,
@@ -131,13 +135,31 @@ describe("message attachment HTTP routes", () => {
       .set("Authorization", "Bearer token")
       .send({
         contentType: "image/png",
-        contentLength: MAX_ATTACHMENT_BYTES + 1,
+        contentLength: MAX_IMAGE_ATTACHMENT_BYTES + 1,
         originalFileName: "photo.png",
       })
       .expect(400);
 
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
     expect(service.createInput).toBeNull();
+  });
+
+  it("accepts a PDF upload intent up to 25 MiB", async () => {
+    const service = new FakeAttachmentService();
+
+    await request(createTestApp(service))
+      .post(
+        `/api/v1/conversations/${CONVERSATION_ID}/attachments/uploads`,
+      )
+      .set("Authorization", "Bearer token")
+      .send({
+        contentType: "application/pdf",
+        contentLength: MAX_PDF_ATTACHMENT_BYTES,
+        originalFileName: "report.pdf",
+      })
+      .expect(201);
+
+    expect(service.createInput?.contentType).toBe("application/pdf");
   });
 
   it("redirects an authorized access request to a fresh presigned GET", async () => {

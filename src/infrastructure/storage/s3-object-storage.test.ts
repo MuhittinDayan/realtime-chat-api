@@ -77,6 +77,31 @@ describe("S3ObjectStorage", () => {
       expect.any(GetObjectCommand),
       { expiresIn: 60 },
     );
+    const command = signedUrlFactory.mock.calls[0]?.[1] as GetObjectCommand;
+    expect(command.input.ResponseContentDisposition).toBeUndefined();
+    expect(command.input.ResponseContentType).toBeUndefined();
+  });
+
+  it("signs optional download response headers", async () => {
+    const client = { send: vi.fn() } as unknown as S3Client;
+    const signedUrlFactory = vi.fn().mockResolvedValue("https://download.test/signed");
+    const storage = new S3ObjectStorage(client, signedUrlFactory);
+
+    await storage.presignGet({
+      bucket: "chat-attachments",
+      key: "ready/user/asset/original.pdf",
+      expiresInSeconds: 60,
+      responseContentDisposition:
+        "attachment; filename=\"report.pdf\"; filename*=UTF-8''report.pdf",
+      responseContentType: "application/pdf",
+    });
+
+    const command = signedUrlFactory.mock.calls[0]?.[1] as GetObjectCommand;
+    expect(command.input).toMatchObject({
+      ResponseContentDisposition:
+        "attachment; filename=\"report.pdf\"; filename*=UTF-8''report.pdf",
+      ResponseContentType: "application/pdf",
+    });
   });
 
   it("supports head, get, put, and idempotent delete commands", async () => {

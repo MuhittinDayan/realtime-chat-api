@@ -47,6 +47,8 @@ export interface PresignGetInput {
   bucket: string;
   key: string;
   expiresInSeconds: number;
+  responseContentDisposition?: string;
+  responseContentType?: string;
 }
 
 export interface ObjectLocation {
