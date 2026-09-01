@@ -347,7 +347,7 @@ Kaynaklar: `src/modules/media/avatar.service.ts`, `src/modules/media/avatar-imag
 
 ## B2. Mesaj görseli upload, bağlama, erişim ve retention
 
-Mesaj görseli de API'ye base64/multipart taşınmaz. Aktif conversation üyesi önce
+Mesaj görseli ve PDF API'ye base64/multipart taşınmaz. Aktif conversation üyesi önce
 private upload intent alır, dönen başlıklarla object storage'a PUT yapar ve
 complete çağırır:
 
@@ -381,6 +381,14 @@ PUT başarılı olduktan sonra
 sınırlarıyla doğrular; metadata'yı temizleyip crop yapmadan private WebP asıl
 (uzun kenar en fazla 4096) ve thumbnail (uzun kenar en fazla 480) üretir.
 
+PDF intent'i aynı endpoint'e `contentType: "application/pdf"` ile gönderilir ve
+dosya başına sınır 25 MiB'dir. Complete sırası magic-byte doğrulaması, PDF.js ile
+parse/şifre kontrolü ve ClamAV `INSTREAM` taramasıdır. Temiz PDF byte'ları
+değiştirilmeden private ready object'e alınır; thumbnail üretilmez. Şifreli,
+bozuk veya malware bulunan PDF kalıcı `REJECTED` olur. Scanner timeout veya
+ulaşılamama hatası `503 ATTACHMENT_SCAN_UNAVAILABLE` döndürür, asset `PENDING`
+durumuna alınır ve upload süresi geçerliyse complete yeniden denenebilir.
+
 Hazır attachment, aynı conversation için MEDIA mesaja atomik bağlanır:
 
 ```http
@@ -398,7 +406,10 @@ Content-Type: application/json
 }
 ```
 
-Bir MEDIA mesajı 1-4 tekrarsız attachment ister. Caption opsiyoneldir; varsa
+Bir MEDIA mesajı 1-4 tekrarsız IMAGE/PDF attachment ister; türler aynı mesajda
+karıştırılabilir. Binding transaction'ı doğrulanmış `actualSize` toplamını kontrol
+eder ve 50 MiB üstünü `MESSAGE_ATTACHMENTS_TOTAL_SIZE_EXCEEDED` ile reddeder.
+Caption opsiyoneldir; varsa
 1-4000 karakterdir. Sonradan yalnızca caption değiştirilebilir:
 
 ```json
@@ -408,10 +419,13 @@ Bir MEDIA mesajı 1-4 tekrarsız attachment ister. Caption opsiyoneldir; varsa
 `attachmentIds` PATCH gövdesinde kabul edilmez ve `400 VALIDATION_ERROR` döner.
 Görseli değiştirmek için mesaj silinip yeniden gönderilir.
 
-Message içindeki `url` / `thumbnailUrl` backend yollarıdır. İstemci bunları Bearer
+Message içindeki `url` / IMAGE için `thumbnailUrl` backend yollarıdır. İstemci bunları Bearer
 token ile çağırır; backend üyeliği ve canlı mesajı doğrulayıp `307` ile 60-120
 saniyelik private GET'e yönlendirir. Presigned URL cache'e veya kalıcı state'e
-yazılmamalıdır. Silinen MEDIA mesajı `attachments: []` olur ve GET anında 404
+yazılmamalıdır. PDF yalnızca `original` variant ile `Content-Disposition:
+attachment` olarak indirilir; dosya adı GET anında sanitize edilip ASCII
+`filename` ve RFC 5987 `filename*` parametreleriyle imzalanır. Silinen MEDIA
+mesajı `attachments: []` olur ve GET anında 404
 döner; nesneler request sırasında silinmez. Soft-delete eki 30 gün, READY ama
 bağlanmamış ek 24 saat, süresi dolmuş PENDING/REJECTED/CANCELLED ek ise bir
 saatlik güvenlik aralığından sonra mevcut media cleanup worker'ında temizlenir.
@@ -420,8 +434,9 @@ Süreler env ile değiştirilebilir.
 Format ve lifecycle hata kodları: `UNSUPPORTED_ATTACHMENT_FORMAT`,
 `ATTACHMENT_UPLOAD_NOT_FOUND`, `ATTACHMENT_UPLOAD_EXPIRED`,
 `ATTACHMENT_UPLOAD_INCOMPLETE`, `ATTACHMENT_UPLOAD_CONFLICT`,
-`INVALID_ATTACHMENT_FILE`, `ATTACHMENT_STORAGE_UNAVAILABLE`,
-`ATTACHMENT_BINDING_CONFLICT` ve erişimde `ATTACHMENT_NOT_FOUND`.
+`INVALID_ATTACHMENT_FILE`, `KIND_MISMATCH`, `ATTACHMENT_STORAGE_UNAVAILABLE`,
+`ATTACHMENT_SCAN_UNAVAILABLE`, `ATTACHMENT_BINDING_CONFLICT`,
+`MESSAGE_ATTACHMENTS_TOTAL_SIZE_EXCEEDED` ve erişimde `ATTACHMENT_NOT_FOUND`.
 
 Upload intent'ten sonra kullanıcı gruptan çıkarılırsa PUT imzası tekil olarak
 geri alınamadığı için süresi dolana kadar storage'a yazabilir. Complete ve binding

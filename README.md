@@ -36,7 +36,7 @@ Temiz bir makinede:
    uzunluğunda rastgele bir secret ile değiştirin. Diğer varsayılan veritabanı
    değerleri Compose ile doğrudan uyumludur.
 
-4. PostgreSQL ile MinIO'yu başlatın, healthcheck'leri bekleyin, avatar ve
+4. PostgreSQL, MinIO ve ClamAV'ı başlatın; healthcheck'leri bekleyin, avatar ve
    attachment bucket'larını hazırlayın, Prisma Client'ı üretin,
    geliştirme ve test veritabanlarına migration uygulayın ve geliştirme
    verisini yükleyin:
@@ -45,12 +45,22 @@ Temiz bir makinede:
    npm run setup:local
    ```
 
-   Bu komut `postgres:17-alpine` ile pinlenmiş MinIO container'larını başlatır. Ana veritabanı
+   Bu komut pinlenmiş PostgreSQL, MinIO ve `clamav/clamav:1.4.3`
+   container'larını başlatır. Ana veritabanı
    `.env.example` ile aynı `postgresql://postgres:postgres@localhost:5432/chat`
    adresindedir. Vitest'in mevcut yapılandırmasına uygun `chat_test`
    veritabanı da hazırlanır. MinIO API `http://localhost:9000`, yönetim konsolu
    `http://localhost:9001` adresindedir. `chat-avatars` bucket'ında yalnızca
    `public/*` anonim okunabilir; `incoming/*` ve `chat-attachments` private kalır.
+   ClamAV TCP servisi yalnızca `127.0.0.1:3310` üzerinde açılır ve imza veritabanı
+   `clamav_data` named volume'unda tutulur.
+
+   Faz 14c yerel ortamında periyodik `freshclam` daemon'u bilinçli olarak kapalıdır.
+   Container ilk boş volume başlangıcında imzaları indirir. İmzaları daha sonra
+   elle güncellemek için `docker compose exec clamav freshclam` çalıştırıp
+   `docker compose restart clamav` kullanın. Production'da zamanlanmış imza
+   güncellemesi, başarısız güncelleme alarmı ve imza yaşı takibi ayrıca
+   provision edilmelidir.
 
    Yalnızca bucket/policy kurulumunu yeniden çalıştırmak için:
 

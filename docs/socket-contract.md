@@ -244,10 +244,10 @@ Kaynaklar: `src/modules/messages/message.service.ts`, `src/realtime/messages/mes
 
 ### `message:updated`
 
-Faz 14b ile üç mesaj event'i de aynı `TEXT | MEDIA` union'ını taşır. Canlı bir
+Faz 14b/14c ile üç mesaj event'i de aynı `TEXT | MEDIA` union'ını taşır. Canlı bir
 MEDIA mesajında `attachments` dizisi bulunur; binary/base64 veya presigned URL
-taşınmaz. `url` ve `thumbnailUrl`, üyelik kontrolü yapıp her istekte yeni kısa
-ömürlü GET üreten API yollarıdır:
+taşınmaz. `url` ve IMAGE için `thumbnailUrl`, üyelik kontrolü yapıp her istekte
+yeni kısa ömürlü GET üreten API yollarıdır. PDF attachment'ı thumbnail taşımaz:
 
 ```ts
 {
@@ -256,12 +256,19 @@ taşınmaz. `url` ve `thumbnailUrl`, üyelik kontrolü yapıp her istekte yeni k
     body: string | null;
     attachments: Array<{
       id: string;
+      kind: "IMAGE";
       originalFileName: string;
       contentType: "image/webp";
       width: number;
       height: number;
       url: string;
       thumbnailUrl: string;
+    } | {
+      id: string;
+      kind: "PDF";
+      originalFileName: string;
+      contentType: "application/pdf";
+      url: string;
     }>;
     // Diğer ortak Message alanları aynıdır.
   };
