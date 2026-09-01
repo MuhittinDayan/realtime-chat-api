@@ -42,6 +42,12 @@ services:
       CLAMD_CONF_TCPSocket: "3310"
       CLAMD_CONF_TCPAddr: "0.0.0.0"
       CLAMD_CONF_StreamMaxLength: ${CLAMAV_STREAM_MAX_LENGTH_BYTES:-33554432}
+      CLAMD_CONF_MaxScanSize: "100M"
+      CLAMD_CONF_MaxFileSize: "25M"
+      CLAMD_CONF_MaxRecursion: "10"
+      CLAMD_CONF_MaxFiles: "1000"
+      CLAMD_CONF_AlertExceedsMax: "yes"
+      CLAMD_CONF_AlertEncrypted: "yes"
     ports:
       - "127.0.0.1:3310:3310"
     volumes:

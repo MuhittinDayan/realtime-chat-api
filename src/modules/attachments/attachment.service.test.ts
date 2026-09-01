@@ -539,3 +539,101 @@ describe("PDF attachment lifecycle", () => {
     ).not.toMatch(/[\r\n/\\]/u);
   });
 });
+
+describe("Office attachment lifecycle", () => {
+  const cases = [
+    {
+      kind: "DOCX",
+      extension: "docx",
+      contentType:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    },
+    {
+      kind: "XLSX",
+      extension: "xlsx",
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
+    {
+      kind: "PPTX",
+      extension: "pptx",
+      contentType:
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    },
+  ] as const;
+
+  it.each(cases)(
+    "stores a clean $kind attachment as its original bytes",
+    async ({ kind, extension, contentType }) => {
+      const fixture = createFixture();
+      fixture.detector.detectedContentType = contentType;
+      fixture.storage.storedContentType = contentType;
+      await fixture.service.createUpload(USER_ID, CONVERSATION_ID, {
+        contentType,
+        contentLength: fixture.storage.storedBody.byteLength,
+        originalFileName: `report.${extension}`,
+      });
+
+      const completed = await fixture.service.completeUpload(
+        USER_ID,
+        CONVERSATION_ID,
+        ATTACHMENT_ID,
+      );
+
+      expect(completed).toEqual({
+        id: ATTACHMENT_ID,
+        kind,
+        originalFileName: `report.${extension}`,
+        contentType,
+        url: `/api/v1/conversations/${CONVERSATION_ID}/attachments/${ATTACHMENT_ID}/original`,
+      });
+      expect(fixture.pdfProcessor.validated).toBe(false);
+      expect(fixture.malwareScanner.scanned).toBe(true);
+      expect(fixture.repository.completedData).toMatchObject({
+        detectedContentType: contentType,
+        actualSize: fixture.storage.storedBody.byteLength,
+        width: null,
+        height: null,
+      });
+      expect(fixture.storage.putInputs).toEqual([
+        expect.objectContaining({
+          key: `ready/${USER_ID}/${ASSET_ID}/original.${extension}`,
+          body: fixture.storage.storedBody,
+          contentType,
+        }),
+      ]);
+    },
+  );
+
+  it.each([
+    {
+      extension: "docm",
+      contentType:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    },
+    {
+      extension: "xlsm",
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
+    {
+      extension: "pptm",
+      contentType:
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    },
+  ])(
+    "rejects the macro-enabled .$extension extension before creating an upload",
+    async ({ extension, contentType }) => {
+      const fixture = createFixture();
+
+      await expect(
+        fixture.service.createUpload(USER_ID, CONVERSATION_ID, {
+          contentType,
+          contentLength: fixture.storage.storedBody.byteLength,
+          originalFileName: `report.${extension}`,
+        }),
+      ).rejects.toBeInstanceOf(InvalidAttachmentFileError);
+      expect(fixture.repository.created).toBeNull();
+    },
+  );
+});

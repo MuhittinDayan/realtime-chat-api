@@ -8,10 +8,15 @@ import {
 } from "../../infrastructure/storage/index.js";
 import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
 import {
+  ATTACHMENT_DOCX_CONTENT_TYPE,
+  ATTACHMENT_PDF_CONTENT_TYPE,
+  ATTACHMENT_PPTX_CONTENT_TYPE,
+  ATTACHMENT_XLSX_CONTENT_TYPE,
   attachmentKindForContentType,
   isAttachmentContentType,
-  MAX_IMAGE_ATTACHMENT_BYTES,
-  MAX_PDF_ATTACHMENT_BYTES,
+  maximumAttachmentBytesForKind,
+  type AttachmentContentType,
+  type AttachmentKind,
 } from "./attachment.constants.js";
 import {
   AttachmentKindMismatchError,
@@ -76,7 +81,7 @@ export interface AttachmentUploadIntent {
 export interface BaseMessageAttachmentDto {
   id: string;
   originalFileName: string;
-  kind: "IMAGE" | "PDF";
+  kind: AttachmentKind;
   url: string;
 }
 
@@ -93,9 +98,27 @@ export interface PdfMessageAttachmentDto extends BaseMessageAttachmentDto {
   contentType: "application/pdf";
 }
 
+export interface DocxMessageAttachmentDto extends BaseMessageAttachmentDto {
+  kind: "DOCX";
+  contentType: typeof ATTACHMENT_DOCX_CONTENT_TYPE;
+}
+
+export interface XlsxMessageAttachmentDto extends BaseMessageAttachmentDto {
+  kind: "XLSX";
+  contentType: typeof ATTACHMENT_XLSX_CONTENT_TYPE;
+}
+
+export interface PptxMessageAttachmentDto extends BaseMessageAttachmentDto {
+  kind: "PPTX";
+  contentType: typeof ATTACHMENT_PPTX_CONTENT_TYPE;
+}
+
 export type MessageAttachmentDto =
   | ImageMessageAttachmentDto
-  | PdfMessageAttachmentDto;
+  | PdfMessageAttachmentDto
+  | DocxMessageAttachmentDto
+  | XlsxMessageAttachmentDto
+  | PptxMessageAttachmentDto;
 
 export type AttachmentVariant = "original" | "thumbnail";
 
@@ -127,23 +150,23 @@ export class AttachmentService {
     }
 
     const kind = attachmentKindForContentType(input.contentType);
-    const maximumBytes = maximumBytesForKind(kind);
+    const maximumBytes = maximumAttachmentBytesForKind(kind);
 
-    if (input.contentLength > maximumBytes) {
+    if (
+      input.contentLength > maximumBytes ||
+      !isOriginalFileNameAllowedForKind(input.originalFileName, kind)
+    ) {
       throw new InvalidAttachmentFileError();
     }
 
     const attachmentId = this.createId();
     const assetId = this.createId();
     const incomingObjectKey = `incoming/${ownerId}/${assetId}`;
-    const readyObjectKey =
-      kind === "PDF"
-        ? `ready/${ownerId}/${assetId}/original.pdf`
-        : `ready/${ownerId}/${assetId}/original.webp`;
-    const thumbnailObjectKey =
-      kind === "IMAGE"
-        ? `ready/${ownerId}/${assetId}/thumbnail.webp`
-        : null;
+    const { readyObjectKey, thumbnailObjectKey } = storageKeysForKind(
+      kind,
+      ownerId,
+      assetId,
+    );
     const uploadExpiresAt = new Date(
       this.now().getTime() + this.config.uploadUrlTtlSeconds * 1_000,
     );
@@ -274,14 +297,10 @@ export class AttachmentService {
         bucket: this.config.attachmentBucket,
         key,
         expiresInSeconds: this.config.downloadUrlTtlSeconds,
-        ...(attachment.kind === "PDF"
-          ? {
-              responseContentDisposition: buildPdfContentDisposition(
-                attachment.originalFileName,
-              ),
-              responseContentType: "application/pdf",
-            }
-          : {}),
+        ...downloadResponseMetadataForKind(
+          attachment.kind,
+          attachment.originalFileName,
+        ),
       });
     } catch (error: unknown) {
       throw new AttachmentStorageUnavailableError(error);
@@ -322,7 +341,7 @@ export class AttachmentService {
   ): Promise<void> {
     const incomingObjectKey = requireObjectKey(attachment.incomingObjectKey);
     const readyObjectKey = requireObjectKey(attachment.readyObjectKey);
-    const maximumBytes = maximumBytesForKind(attachment.kind);
+    const maximumBytes = maximumAttachmentBytesForKind(attachment.kind);
     const location = {
       bucket: this.config.attachmentBucket,
       key: incomingObjectKey,
@@ -385,12 +404,39 @@ export class AttachmentService {
       throw new InvalidAttachmentFileError();
     }
 
-    if (attachment.kind === "PDF") {
-      await this.processPdfUpload(ownerId, attachment, stored.body, readyObjectKey);
-      return;
-    }
+    const kind = attachment.kind;
 
-    await this.processImageUpload(ownerId, attachment, stored.body, readyObjectKey);
+    switch (kind) {
+      case "IMAGE":
+        await this.processImageUpload(
+          ownerId,
+          attachment,
+          stored.body,
+          readyObjectKey,
+        );
+        return;
+      case "PDF":
+        await this.processPdfUpload(
+          ownerId,
+          attachment,
+          stored.body,
+          readyObjectKey,
+        );
+        return;
+      case "DOCX":
+      case "XLSX":
+      case "PPTX":
+        await this.processOfficeUpload(
+          ownerId,
+          attachment,
+          stored.body,
+          readyObjectKey,
+          detectedContentType,
+        );
+        return;
+      default:
+        assertNever(kind);
+    }
   }
 
   private async processImageUpload(
@@ -465,6 +511,49 @@ export class AttachmentService {
       throw new InvalidAttachmentFileError(error);
     }
 
+    await this.scanAndStoreOriginalUpload(
+      ownerId,
+      attachment,
+      body,
+      readyObjectKey,
+      ATTACHMENT_PDF_CONTENT_TYPE,
+      malwareScanner,
+    );
+  }
+
+  private async processOfficeUpload(
+    ownerId: string,
+    attachment: AttachmentRecord,
+    body: Uint8Array,
+    readyObjectKey: string,
+    detectedContentType: AttachmentContentType,
+  ): Promise<void> {
+    const malwareScanner = this.malwareScanner;
+
+    if (malwareScanner === undefined) {
+      return this.releaseAfterTransientScanFailure(ownerId, attachment, {
+        reason: "SCANNER_NOT_CONFIGURED",
+      });
+    }
+
+    await this.scanAndStoreOriginalUpload(
+      ownerId,
+      attachment,
+      body,
+      readyObjectKey,
+      detectedContentType,
+      malwareScanner,
+    );
+  }
+
+  private async scanAndStoreOriginalUpload(
+    ownerId: string,
+    attachment: AttachmentRecord,
+    body: Uint8Array,
+    readyObjectKey: string,
+    contentType: AttachmentContentType,
+    malwareScanner: AttachmentMalwareScanner,
+  ): Promise<void> {
     let scanResult: Awaited<ReturnType<AttachmentMalwareScanner["scan"]>>;
 
     try {
@@ -485,7 +574,7 @@ export class AttachmentService {
         bucket: this.config.attachmentBucket,
         key: readyObjectKey,
         body,
-        contentType: "application/pdf",
+        contentType,
       });
     } catch (error: unknown) {
       await this.repository.releaseProcessingForRetry(ownerId, attachment.assetId);
@@ -493,7 +582,7 @@ export class AttachmentService {
     }
 
     await this.completeProcessedAttachment(ownerId, attachment, {
-      detectedContentType: "application/pdf",
+      detectedContentType: contentType,
       actualSize: body.byteLength,
       width: null,
       height: null,
@@ -569,7 +658,7 @@ export class AttachmentService {
     if (
       stored.contentLength !== actualSize ||
       actualSize !== attachment.declaredSize ||
-      actualSize > maximumBytesForKind(attachment.kind)
+      actualSize > maximumAttachmentBytesForKind(attachment.kind)
     ) {
       throw new InvalidAttachmentFileError();
     }
@@ -587,7 +676,7 @@ export class AttachmentService {
     if (
       contentType !== attachment.declaredContentType ||
       stored.contentLength !== attachment.declaredSize ||
-      stored.contentLength > maximumBytesForKind(attachment.kind)
+      stored.contentLength > maximumAttachmentBytesForKind(attachment.kind)
     ) {
       throw new InvalidAttachmentFileError();
     }
@@ -634,56 +723,210 @@ export function toMessageAttachmentDto(
     `/api/v1/conversations/${attachment.conversationId}` +
     `/attachments/${attachment.id}`;
 
-  if (attachment.kind === "PDF") {
-    if (attachment.detectedContentType !== "application/pdf") {
-      throw new AttachmentUploadConflictError();
-    }
+  const kind = attachment.kind;
 
-    return {
-      id: attachment.id,
-      kind: "PDF",
-      originalFileName: attachment.originalFileName,
-      contentType: "application/pdf",
-      url: `${basePath}/original`,
-    };
+  switch (kind) {
+    case "IMAGE":
+      if (
+        attachment.width === null ||
+        attachment.height === null ||
+        attachment.thumbnailObjectKey === null
+      ) {
+        throw new AttachmentUploadConflictError();
+      }
+
+      return {
+        id: attachment.id,
+        kind: "IMAGE",
+        originalFileName: attachment.originalFileName,
+        contentType: "image/webp",
+        width: attachment.width,
+        height: attachment.height,
+        url: `${basePath}/original`,
+        thumbnailUrl: `${basePath}/thumbnail`,
+      };
+    case "PDF":
+      requireDetectedContentType(
+        attachment.detectedContentType,
+        ATTACHMENT_PDF_CONTENT_TYPE,
+      );
+      return {
+        id: attachment.id,
+        kind: "PDF",
+        originalFileName: attachment.originalFileName,
+        contentType: ATTACHMENT_PDF_CONTENT_TYPE,
+        url: `${basePath}/original`,
+      };
+    case "DOCX":
+      requireDetectedContentType(
+        attachment.detectedContentType,
+        ATTACHMENT_DOCX_CONTENT_TYPE,
+      );
+      return {
+        id: attachment.id,
+        kind: "DOCX",
+        originalFileName: attachment.originalFileName,
+        contentType: ATTACHMENT_DOCX_CONTENT_TYPE,
+        url: `${basePath}/original`,
+      };
+    case "XLSX":
+      requireDetectedContentType(
+        attachment.detectedContentType,
+        ATTACHMENT_XLSX_CONTENT_TYPE,
+      );
+      return {
+        id: attachment.id,
+        kind: "XLSX",
+        originalFileName: attachment.originalFileName,
+        contentType: ATTACHMENT_XLSX_CONTENT_TYPE,
+        url: `${basePath}/original`,
+      };
+    case "PPTX":
+      requireDetectedContentType(
+        attachment.detectedContentType,
+        ATTACHMENT_PPTX_CONTENT_TYPE,
+      );
+      return {
+        id: attachment.id,
+        kind: "PPTX",
+        originalFileName: attachment.originalFileName,
+        contentType: ATTACHMENT_PPTX_CONTENT_TYPE,
+        url: `${basePath}/original`,
+      };
+    default:
+      return assertNever(kind);
   }
-
-  if (
-    attachment.width === null ||
-    attachment.height === null ||
-    attachment.thumbnailObjectKey === null
-  ) {
-    throw new AttachmentUploadConflictError();
-  }
-
-  return {
-    id: attachment.id,
-    kind: "IMAGE",
-    originalFileName: attachment.originalFileName,
-    contentType: "image/webp",
-    width: attachment.width,
-    height: attachment.height,
-    url: `${basePath}/original`,
-    thumbnailUrl: `${basePath}/thumbnail`,
-  };
 }
 
-function maximumBytesForKind(kind: AttachmentRecord["kind"]): number {
-  return kind === "PDF"
-    ? MAX_PDF_ATTACHMENT_BYTES
-    : MAX_IMAGE_ATTACHMENT_BYTES;
+function storageKeysForKind(
+  kind: AttachmentKind,
+  ownerId: string,
+  assetId: string,
+): { readyObjectKey: string; thumbnailObjectKey: string | null } {
+  const readyPrefix = `ready/${ownerId}/${assetId}`;
+
+  switch (kind) {
+    case "IMAGE":
+      return {
+        readyObjectKey: `${readyPrefix}/original.webp`,
+        thumbnailObjectKey: `${readyPrefix}/thumbnail.webp`,
+      };
+    case "PDF":
+      return {
+        readyObjectKey: `${readyPrefix}/original.pdf`,
+        thumbnailObjectKey: null,
+      };
+    case "DOCX":
+      return {
+        readyObjectKey: `${readyPrefix}/original.docx`,
+        thumbnailObjectKey: null,
+      };
+    case "XLSX":
+      return {
+        readyObjectKey: `${readyPrefix}/original.xlsx`,
+        thumbnailObjectKey: null,
+      };
+    case "PPTX":
+      return {
+        readyObjectKey: `${readyPrefix}/original.pptx`,
+        thumbnailObjectKey: null,
+      };
+    default:
+      return assertNever(kind);
+  }
+}
+
+function downloadResponseMetadataForKind(
+  kind: AttachmentKind,
+  originalFileName: string,
+): {
+  responseContentDisposition?: string;
+  responseContentType?: AttachmentContentType;
+} {
+  switch (kind) {
+    case "IMAGE":
+      return {};
+    case "PDF":
+      return {
+        responseContentDisposition: buildPdfContentDisposition(originalFileName),
+        responseContentType: ATTACHMENT_PDF_CONTENT_TYPE,
+      };
+    case "DOCX":
+      return {
+        responseContentDisposition: buildAttachmentContentDisposition(
+          originalFileName,
+          "attachment.docx",
+        ),
+        responseContentType: ATTACHMENT_DOCX_CONTENT_TYPE,
+      };
+    case "XLSX":
+      return {
+        responseContentDisposition: buildAttachmentContentDisposition(
+          originalFileName,
+          "attachment.xlsx",
+        ),
+        responseContentType: ATTACHMENT_XLSX_CONTENT_TYPE,
+      };
+    case "PPTX":
+      return {
+        responseContentDisposition: buildAttachmentContentDisposition(
+          originalFileName,
+          "attachment.pptx",
+        ),
+        responseContentType: ATTACHMENT_PPTX_CONTENT_TYPE,
+      };
+    default:
+      return assertNever(kind);
+  }
+}
+
+function isOriginalFileNameAllowedForKind(
+  originalFileName: string,
+  kind: AttachmentKind,
+): boolean {
+  const lowerCaseName = originalFileName.trim().toLowerCase();
+
+  switch (kind) {
+    case "IMAGE":
+    case "PDF":
+      return true;
+    case "DOCX":
+      return lowerCaseName.endsWith(".docx");
+    case "XLSX":
+      return lowerCaseName.endsWith(".xlsx");
+    case "PPTX":
+      return lowerCaseName.endsWith(".pptx");
+    default:
+      return assertNever(kind);
+  }
+}
+
+function requireDetectedContentType(
+  actual: string | null,
+  expected: AttachmentContentType,
+): void {
+  if (actual !== expected) {
+    throw new AttachmentUploadConflictError();
+  }
 }
 
 export function buildPdfContentDisposition(originalFileName: string): string {
+  return buildAttachmentContentDisposition(originalFileName, "attachment.pdf");
+}
+
+function buildAttachmentContentDisposition(
+  originalFileName: string,
+  fallbackFileName: string,
+): string {
   const sanitized = originalFileName
     .replace(/[\u0000-\u001f\u007f/\\]+/gu, "_")
     .trim();
-  const safeName = sanitized.length === 0 ? "attachment.pdf" : sanitized;
+  const safeName = sanitized.length === 0 ? fallbackFileName : sanitized;
   const asciiFallback =
     safeName
       .normalize("NFKD")
       .replace(/[^\x20-\x7e]/gu, "_")
-      .replace(/["\\]/gu, "_") || "attachment.pdf";
+      .replace(/["\\]/gu, "_") || fallbackFileName;
   const encoded = encodeURIComponent(safeName).replace(
     /[!'()*]/gu,
     (character) =>
@@ -691,4 +934,8 @@ export function buildPdfContentDisposition(originalFileName: string): string {
   );
 
   return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`;
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unsupported attachment kind: ${String(value)}`);
 }

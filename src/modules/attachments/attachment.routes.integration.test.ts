@@ -13,6 +13,7 @@ import {
 } from "./attachment.controller.js";
 import {
   MAX_IMAGE_ATTACHMENT_BYTES,
+  MAX_OFFICE_ATTACHMENT_BYTES,
   MAX_PDF_ATTACHMENT_BYTES,
 } from "./attachment.constants.js";
 import { createAttachmentRouter } from "./attachment.routes.js";
@@ -160,6 +161,46 @@ describe("message attachment HTTP routes", () => {
       .expect(201);
 
     expect(service.createInput?.contentType).toBe("application/pdf");
+  });
+
+  it("accepts an Office upload intent up to 20 MiB", async () => {
+    const service = new FakeAttachmentService();
+
+    await request(createTestApp(service))
+      .post(
+        `/api/v1/conversations/${CONVERSATION_ID}/attachments/uploads`,
+      )
+      .set("Authorization", "Bearer token")
+      .send({
+        contentType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        contentLength: MAX_OFFICE_ATTACHMENT_BYTES,
+        originalFileName: "report.docx",
+      })
+      .expect(201);
+
+    expect(service.createInput?.contentLength).toBe(
+      MAX_OFFICE_ATTACHMENT_BYTES,
+    );
+  });
+
+  it("rejects an Office upload intent above 20 MiB", async () => {
+    const service = new FakeAttachmentService();
+
+    await request(createTestApp(service))
+      .post(
+        `/api/v1/conversations/${CONVERSATION_ID}/attachments/uploads`,
+      )
+      .set("Authorization", "Bearer token")
+      .send({
+        contentType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        contentLength: MAX_OFFICE_ATTACHMENT_BYTES + 1,
+        originalFileName: "report.xlsx",
+      })
+      .expect(400);
+
+    expect(service.createInput).toBeNull();
   });
 
   it("redirects an authorized access request to a fresh presigned GET", async () => {

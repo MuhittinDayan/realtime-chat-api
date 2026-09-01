@@ -1,31 +1,36 @@
 import { z } from "zod";
 
 import {
+  attachmentKindForContentType,
   isAttachmentContentType,
-  MAX_IMAGE_ATTACHMENT_BYTES,
+  maximumAttachmentBytesForKind,
   MAX_PDF_ATTACHMENT_BYTES,
 } from "./attachment.constants.js";
 
 export const createAttachmentUploadSchema = z
   .object({
-    contentType: z.string().trim().toLowerCase().min(1).max(64),
+    contentType: z.string().trim().toLowerCase().min(1).max(128),
     contentLength: z.number().int().positive().max(MAX_PDF_ATTACHMENT_BYTES),
     originalFileName: z.string().trim().min(1),
   })
   .strict()
   .superRefine((input, context) => {
-    if (
-      isAttachmentContentType(input.contentType) &&
-      input.contentType !== "application/pdf" &&
-      input.contentLength > MAX_IMAGE_ATTACHMENT_BYTES
-    ) {
+    if (!isAttachmentContentType(input.contentType)) {
+      return;
+    }
+
+    const maximum = maximumAttachmentBytesForKind(
+      attachmentKindForContentType(input.contentType),
+    );
+
+    if (input.contentLength > maximum) {
       context.addIssue({
         code: "too_big",
-        maximum: MAX_IMAGE_ATTACHMENT_BYTES,
+        maximum,
         origin: "number",
         inclusive: true,
         path: ["contentLength"],
-        message: `Too big: expected number to be <= ${String(MAX_IMAGE_ATTACHMENT_BYTES)}`,
+        message: `Too big: expected number to be <= ${String(maximum)}`,
       });
     }
   });
