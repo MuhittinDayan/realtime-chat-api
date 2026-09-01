@@ -117,6 +117,23 @@ const environmentSchema = z.object({
     .min(60)
     .max(120)
     .default(60),
+  CLAMAV_HOST: z.string().trim().min(1).default("127.0.0.1"),
+  CLAMAV_PORT: z.coerce.number().int().min(1).max(65_535).default(3_310),
+  CLAMAV_SCAN_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10_000),
+  CLAMAV_MAX_CONCURRENT_SCANS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(4),
+  CLAMAV_STREAM_MAX_LENGTH_BYTES: z.coerce
+    .number()
+    .int()
+    .min(25 * 1_024 * 1_024 + 1)
+    .default(32 * 1_024 * 1_024),
   MEDIA_CLEANUP_INTERVAL_MS: z.coerce
     .number()
     .int()

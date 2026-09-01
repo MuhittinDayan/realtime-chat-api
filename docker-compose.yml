@@ -35,6 +35,25 @@ services:
       retries: 10
       start_period: 5s
 
+  clamav:
+    image: clamav/clamav:1.4.3
+    environment:
+      CLAMAV_NO_FRESHCLAMD: "true"
+      CLAMD_CONF_TCPSocket: "3310"
+      CLAMD_CONF_TCPAddr: "0.0.0.0"
+      CLAMD_CONF_StreamMaxLength: ${CLAMAV_STREAM_MAX_LENGTH_BYTES:-33554432}
+    ports:
+      - "127.0.0.1:3310:3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping=1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
 volumes:
   postgres_data:
   minio_data:
+  clamav_data:
