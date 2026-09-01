@@ -3,6 +3,13 @@ import { encodeCursor } from "../../shared/pagination/cursor.js";
 import { systemClock, type Clock } from "../../shared/time/clock.js";
 import { MessageNotFoundError } from "./message.errors.js";
 import type { MessageAttachmentDto } from "../attachments/attachment.service.js";
+import {
+  ATTACHMENT_DOCX_CONTENT_TYPE,
+  ATTACHMENT_PDF_CONTENT_TYPE,
+  ATTACHMENT_PPTX_CONTENT_TYPE,
+  ATTACHMENT_XLSX_CONTENT_TYPE,
+  type AttachmentContentType,
+} from "../attachments/attachment.constants.js";
 import type {
   MessageRecord,
   MessageRepository,
@@ -236,38 +243,97 @@ function toMessageAttachmentDto(
     `/api/v1/conversations/${attachment.conversationId}` +
     `/attachments/${attachment.id}`;
 
-  if (attachment.kind === "PDF") {
-    if (attachment.detectedContentType !== "application/pdf") {
-      throw new Error("Ready PDF attachment metadata is incomplete");
-    }
+  const kind = attachment.kind;
 
-    return {
-      id: attachment.id,
-      kind: "PDF",
-      originalFileName: attachment.originalFileName,
-      contentType: "application/pdf",
-      url: `${basePath}/original`,
-    };
+  switch (kind) {
+    case "IMAGE":
+      if (
+        attachment.width === null ||
+        attachment.height === null ||
+        attachment.thumbnailObjectKey === null
+      ) {
+        throw new Error("Ready image attachment metadata is incomplete");
+      }
+
+      return {
+        id: attachment.id,
+        kind: "IMAGE",
+        originalFileName: attachment.originalFileName,
+        contentType: "image/webp",
+        width: attachment.width,
+        height: attachment.height,
+        url: `${basePath}/original`,
+        thumbnailUrl: `${basePath}/thumbnail`,
+      };
+    case "PDF":
+      requireDetectedContentType(
+        attachment.detectedContentType,
+        ATTACHMENT_PDF_CONTENT_TYPE,
+        "PDF",
+      );
+      return {
+        id: attachment.id,
+        kind: "PDF",
+        originalFileName: attachment.originalFileName,
+        contentType: ATTACHMENT_PDF_CONTENT_TYPE,
+        url: `${basePath}/original`,
+      };
+    case "DOCX":
+      requireDetectedContentType(
+        attachment.detectedContentType,
+        ATTACHMENT_DOCX_CONTENT_TYPE,
+        "DOCX",
+      );
+      return {
+        id: attachment.id,
+        kind: "DOCX",
+        originalFileName: attachment.originalFileName,
+        contentType: ATTACHMENT_DOCX_CONTENT_TYPE,
+        url: `${basePath}/original`,
+      };
+    case "XLSX":
+      requireDetectedContentType(
+        attachment.detectedContentType,
+        ATTACHMENT_XLSX_CONTENT_TYPE,
+        "XLSX",
+      );
+      return {
+        id: attachment.id,
+        kind: "XLSX",
+        originalFileName: attachment.originalFileName,
+        contentType: ATTACHMENT_XLSX_CONTENT_TYPE,
+        url: `${basePath}/original`,
+      };
+    case "PPTX":
+      requireDetectedContentType(
+        attachment.detectedContentType,
+        ATTACHMENT_PPTX_CONTENT_TYPE,
+        "PPTX",
+      );
+      return {
+        id: attachment.id,
+        kind: "PPTX",
+        originalFileName: attachment.originalFileName,
+        contentType: ATTACHMENT_PPTX_CONTENT_TYPE,
+        url: `${basePath}/original`,
+      };
+    default:
+      return assertNever(kind);
   }
+}
 
-  if (
-    attachment.width === null ||
-    attachment.height === null ||
-    attachment.thumbnailObjectKey === null
-  ) {
-    throw new Error("Ready image attachment metadata is incomplete");
+function requireDetectedContentType(
+  actual: string | null,
+  expected: AttachmentContentType,
+  kind: string,
+): void {
+  if (actual !== expected) {
+    throw new Error(`Ready ${kind} attachment metadata is incomplete`);
   }
+}
 
-  return {
-    id: attachment.id,
-    kind: "IMAGE",
-    originalFileName: attachment.originalFileName,
-    contentType: "image/webp",
-    width: attachment.width,
-    height: attachment.height,
-    url: `${basePath}/original`,
-    thumbnailUrl: `${basePath}/thumbnail`,
-  };
+function assertNever(value: never): never {
+  throw new Error(`Unsupported attachment kind: ${String(value)}`);
 }
 
 function createNextCursor(message: MessageRecord | undefined): string {

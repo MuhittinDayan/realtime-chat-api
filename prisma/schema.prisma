@@ -60,6 +60,9 @@ enum MediaStatus {
 enum AttachmentKind {
   IMAGE
   PDF
+  DOCX
+  XLSX
+  PPTX
 
   @@map("attachment_kind")
 }
@@ -94,9 +97,9 @@ model MediaAsset {
   ownerId             String       @map("owner_id") @db.Uuid
   purpose             MediaPurpose @default(AVATAR)
   status              MediaStatus  @default(PENDING)
-  declaredContentType String       @map("declared_content_type") @db.VarChar(64)
+  declaredContentType String       @map("declared_content_type") @db.VarChar(128)
   declaredSize        Int          @map("declared_size")
-  detectedContentType String?      @map("detected_content_type") @db.VarChar(64)
+  detectedContentType String?      @map("detected_content_type") @db.VarChar(128)
   actualSize          Int?         @map("actual_size")
   width               Int?
   height              Int?
