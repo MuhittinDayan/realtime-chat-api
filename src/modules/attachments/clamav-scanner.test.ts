@@ -56,6 +56,24 @@ describe("ClamAvAttachmentScanner", () => {
     });
   });
 
+  it.each([
+    "Heuristics.Limits.Exceeded.MaxScanSize",
+    "Heuristics.Encrypted.OLE2",
+  ])("returns ClamAV heuristic alert %s as FOUND", async (signature) => {
+    const port = await listen((socket) => {
+      socket.on("data", (chunk: Buffer) => {
+        if (chunk.subarray(-4).equals(Buffer.alloc(4))) {
+          socket.end(`stream: ${signature} FOUND\0`);
+        }
+      });
+    });
+
+    await expect(createScanner(port).scan(new Uint8Array([1]))).resolves.toEqual({
+      status: "FOUND",
+      signature,
+    });
+  });
+
   it("classifies an unavailable daemon as transient", async () => {
     const port = await reserveClosedPort();
 
