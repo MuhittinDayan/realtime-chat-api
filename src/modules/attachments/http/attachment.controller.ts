@@ -1,5 +1,5 @@
 import type { ValidatedRequestHandler } from "../../../http/validation/request-validation.ts";
-import { requireAuthContext } from "../../auth/auth.middleware.ts";
+import { requireAuthContext } from "../../auth/http/auth.middleware.js";
 import type {
   AttachmentAccessParams,
   AttachmentUploadParams,

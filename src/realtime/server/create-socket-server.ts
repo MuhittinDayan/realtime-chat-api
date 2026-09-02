@@ -4,7 +4,7 @@ import { Server as SocketIoServer } from "socket.io";
 
 import { env } from "../../config/env.js";
 import { authService } from "../../modules/auth/auth-core.js";
-import type { AccessAuthenticator } from "../../modules/auth/auth.middleware.js";
+import type { AccessAuthenticator } from "../../modules/auth/http/auth.middleware.js";
 import {
   socketSessionRevocationPublisher,
   type SocketSessionRevocationPublisher,

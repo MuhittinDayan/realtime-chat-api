@@ -8,15 +8,15 @@ import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../app.js";
-import { PrismaAuthRepository } from "../modules/auth/auth.repository.js";
-import { AuthService } from "../modules/auth/auth.service.js";
-import { AuthController } from "../modules/auth/auth.controller.js";
+import { PrismaAuthRepository } from "../modules/auth/persistence/auth.repository.js";
+import { AuthService } from "../modules/auth/application/auth.service.js";
+import { AuthController } from "../modules/auth/http/auth.controller.js";
 import {
   createAuthenticationMiddleware,
   createTrustedOriginMiddleware,
-} from "../modules/auth/auth.middleware.js";
-import { createAuthRouter } from "../modules/auth/auth.routes.js";
-import { HttpRefreshCookieManager } from "../modules/auth/refresh-cookie.js";
+} from "../modules/auth/http/auth.middleware.js";
+import { createAuthRouter } from "../modules/auth/http/auth.routes.js";
+import { HttpRefreshCookieManager } from "../modules/auth/http/refresh-cookie.js";
 import { PrismaAuthSessionRepository } from "../modules/auth/sessions/auth-session.repository.js";
 import { AuthSessionService } from "../modules/auth/sessions/auth-session.service.js";
 import { AccessTokenService } from "../modules/auth/tokens/access-token.service.js";

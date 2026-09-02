@@ -1,6 +1,6 @@
 import type { Socket } from "socket.io";
 
-import type { AccessAuthenticator } from "../../modules/auth/auth.middleware.js";
+import type { AccessAuthenticator } from "../../modules/auth/http/auth.middleware.js";
 import type {
   ChatClientToServerEvents,
   ChatInterServerEvents,

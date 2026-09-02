@@ -1,5 +1,5 @@
-import { AppError } from "../../shared/errors/app-error.js";
-export { RequestValidationError } from "../../shared/errors/request-validation-error.js";
+import { AppError } from "../../../shared/errors/app-error.js";
+export { RequestValidationError } from "../../../shared/errors/request-validation-error.js";
 
 const UNAUTHORIZED_STATUS_CODE = 401;
 

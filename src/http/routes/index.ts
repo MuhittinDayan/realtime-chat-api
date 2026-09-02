@@ -1,6 +1,6 @@
 import { Router } from "express";
 
-import { authRouter } from "../../modules/auth/auth.routes.js";
+import { authRouter } from "../../modules/auth/http/auth.routes.js";
 import { conversationRouter } from "../../modules/conversations/conversation.routes.js";
 import { usersRouter } from "../../modules/users/users.routes.js";
 import { healthRouter } from "./health.routes.js";

@@ -52,7 +52,7 @@ Content-Type: application/json
 
 Kesin kotalar OpenAPI belgesindeki ilgili operasyonlarda yazılıdır. Kaynaklar:
 `src/http/middleware/rate-limit.ts`, `src/http/middleware/error-handler.ts`,
-`src/modules/auth/auth.routes.ts`, `src/modules/users/users.routes.ts`,
+`src/modules/auth/http/auth.routes.ts`, `src/modules/users/users.routes.ts`,
 `src/modules/messages/message.routes.ts`; testler:
 `src/modules/auth/auth.routes.integration.test.ts`,
 `src/modules/users/users.routes.integration.test.ts`,
@@ -116,7 +116,7 @@ Kaynaklar: `src/realtime/server/chat-events.ts`, `src/realtime/server/configure-
 
 Access token TTL'i `ACCESS_TOKEN_TTL_MINUTES` ile belirlenir; ortam şeması varsayılanı 15 dakika, izin verilen aralık 1–60 dakikadır. JWT `exp` yalnızca doğrulama yapıldığı anda kontrol edilir. HTTP Bearer isteğinde her seferinde, Socket.IO'da ise yalnızca handshake sırasında doğrulama yapılır. Bağlı socket üzerinde expiry timer yoktur; token expire olduğunda aktif socket otomatik disconnect edilmez. Eski token ile yapılacak yeni handshake ise `connect_error` ile reddedilir. Kaynaklar: `src/config/env.ts`, `src/modules/auth/tokens/access-token.service.ts`, `src/realtime/auth/socket-auth.middleware.ts`, `src/realtime/server/configure-chat-namespace.ts`.
 
-Register/login/refresh HTTP gövdeleri access token'ın sona erme zamanını dönmez; yalnızca `accessToken` döner. Frontend süreyi JWT `exp` claim'inden okuyabilir veya korumalı HTTP isteğinin `401` cevabında refresh akışını başlatabilir. Kaynak: `src/modules/auth/auth.controller.ts`.
+Register/login/refresh HTTP gövdeleri access token'ın sona erme zamanını dönmez; yalnızca `accessToken` döner. Frontend süreyi JWT `exp` claim'inden okuyabilir veya korumalı HTTP isteğinin `401` cevabında refresh akışını başlatabilir. Kaynak: `src/modules/auth/http/auth.controller.ts`.
 
 ### Örnek refresh akışı
 
@@ -147,7 +147,7 @@ Register/login/refresh HTTP gövdeleri access token'ın sona erme zamanını dö
    });
    ```
 
-   Production'da browser'ın `Origin` başlığı `FRONTEND_ORIGIN` ile eşleşmelidir. Cookie adı `chat_refresh_token`; `HttpOnly` olduğu için frontend JavaScript token değerini okuyamaz. Kaynaklar: `src/modules/auth/auth.middleware.ts`, `src/modules/auth/refresh-cookie.ts`, `src/modules/auth/auth.routes.ts`.
+   Production'da browser'ın `Origin` başlığı `FRONTEND_ORIGIN` ile eşleşmelidir. Cookie adı `chat_refresh_token`; `HttpOnly` olduğu için frontend JavaScript token değerini okuyamaz. Kaynaklar: `src/modules/auth/http/auth.middleware.ts`, `src/modules/auth/http/refresh-cookie.ts`, `src/modules/auth/http/auth.routes.ts`.
 
 3. Başarılı cevap yeni access token'ı gövdede, döndürülmüş refresh token'ı yeni `Set-Cookie` başlığında verir:
 
@@ -208,7 +208,7 @@ Belirli bir session `DELETE /api/v1/auth/sessions/{sessionId}`, mevcut dışınd
 - Açık socket önce payload'sız `auth:revoked` alır, sonra sunucu tarafından kapanır.
 - Access JWT'nin imza/`exp` süresi henüz geçerli olsa bile her korumalı HTTP isteği token'daki `sid` + `sub` çiftini aktif DB session'ına karşı kontrol ettiği için sonraki istek `401 INVALID_TOKEN` döner.
 
-Dolayısıyla frontend "JWT doğal süresi dolana kadar HTTP çalışır" varsayımını kullanmamalıdır. `auth:revoked` alındığında yerel access token temizlenmeli ve yeniden giriş akışı başlatılmalıdır. Kaynaklar: `src/modules/auth/auth.service.ts`, `src/modules/auth/sessions/auth-session.repository.ts`, `src/realtime/auth/session-revocation-publisher.ts`; gerçek PostgreSQL testi: `src/modules/auth/auth.postgres.integration.test.ts`; socket testi: `src/realtime/server/chat.integration.test.ts`.
+Dolayısıyla frontend "JWT doğal süresi dolana kadar HTTP çalışır" varsayımını kullanmamalıdır. `auth:revoked` alındığında yerel access token temizlenmeli ve yeniden giriş akışı başlatılmalıdır. Kaynaklar: `src/modules/auth/application/auth.service.ts`, `src/modules/auth/sessions/auth-session.repository.ts`, `src/realtime/auth/session-revocation-publisher.ts`; gerçek PostgreSQL testi: `src/modules/auth/persistence/auth.postgres.integration.test.ts`; socket testi: `src/realtime/server/chat.integration.test.ts`.
 
 ## B.2. Avatar yükleme
 

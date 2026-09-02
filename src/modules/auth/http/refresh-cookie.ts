@@ -1,12 +1,12 @@
 import { parseCookie } from "cookie";
 import type { CookieOptions, Request, Response } from "express";
 
-import type { Clock } from "../../shared/time/clock.js";
-import { systemClock } from "../../shared/time/clock.js";
+import type { Clock } from "../../../shared/time/clock.js";
+import { systemClock } from "../../../shared/time/clock.js";
 import {
   REFRESH_TOKEN_COOKIE_NAME,
   REFRESH_TOKEN_COOKIE_PATH,
-} from "./auth.constants.js";
+} from "../domain/auth.constants.js";
 
 export interface RefreshCookieManagerOptions {
   secure: boolean;

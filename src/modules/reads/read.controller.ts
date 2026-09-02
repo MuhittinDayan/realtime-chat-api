@@ -1,7 +1,7 @@
 import type { Request } from "express";
 
 import type { ValidatedRequestHandler } from "../../http/validation/request-validation.js";
-import { requireAuthContext } from "../auth/auth.middleware.js";
+import { requireAuthContext } from "../auth/http/auth.middleware.js";
 import type { UpdateReadWatermarkBody } from "./read.schema.js";
 import type { ReadWatermarkDto } from "./read.service.js";
 

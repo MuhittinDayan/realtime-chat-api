@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ZodError } from "zod";
 
 import type { Clock } from "../../../shared/time/clock.js";
-import { InvalidTokenError } from "../auth.errors.js";
+import { InvalidTokenError } from "../domain/auth.errors.js";
 import { AccessTokenService } from "./access-token.service.js";
 
 const NOW = new Date("2030-01-01T00:00:00.000Z");

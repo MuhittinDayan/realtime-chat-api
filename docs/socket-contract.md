@@ -12,7 +12,7 @@ const socket = io(`${apiBaseUrl}/chat`, {
 });
 ```
 
-Sunucu `socket.handshake.auth.token` değerinin boş olmayan bir string olmasını ister. Ardından HTTP Bearer doğrulamasında kullanılan aynı `AuthService.authenticateAccessToken` akışını çağırır: JWT imzası/algoritması, issuer, audience, gerekli claim'ler ve `exp` doğrulanır; token içindeki `sid` + `sub` çifti aktif, süresi dolmamış, iptal edilmemiş ve aktif kullanıcıya ait PostgreSQL oturumuna karşı kontrol edilir. Başarılı sonuçtaki `userId` ve `sessionId`, socket data alanına yazılır. Kaynaklar: `src/realtime/auth/socket-auth.middleware.ts`, `src/modules/auth/auth.service.ts`, `src/modules/auth/tokens/access-token.service.ts`, `src/modules/auth/sessions/auth-session.repository.ts`.
+Sunucu `socket.handshake.auth.token` değerinin boş olmayan bir string olmasını ister. Ardından HTTP Bearer doğrulamasında kullanılan aynı `AuthService.authenticateAccessToken` akışını çağırır: JWT imzası/algoritması, issuer, audience, gerekli claim'ler ve `exp` doğrulanır; token içindeki `sid` + `sub` çifti aktif, süresi dolmamış, iptal edilmemiş ve aktif kullanıcıya ait PostgreSQL oturumuna karşı kontrol edilir. Başarılı sonuçtaki `userId` ve `sessionId`, socket data alanına yazılır. Kaynaklar: `src/realtime/auth/socket-auth.middleware.ts`, `src/modules/auth/application/auth.service.ts`, `src/modules/auth/tokens/access-token.service.ts`, `src/modules/auth/sessions/auth-session.repository.ts`.
 
 Handshake başarısızsa bağlantı kurulmaz; bu bir sonradan oluşan `disconnect` değil, istemcide `connect_error` olayıdır. Hata sözleşmesi:
 

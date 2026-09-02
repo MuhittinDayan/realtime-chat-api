@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { RequestValidationError } from "../../shared/errors/request-validation-error.js";
+import { RequestValidationError } from "../../../shared/errors/request-validation-error.js";
 
 import {
   EmailAlreadyInUseError,
   InvalidCredentialsError,
   InvalidTokenError,
   UsernameAlreadyInUseError,
-} from "./auth.errors.js";
+} from "../domain/auth.errors.js";
 import type {
   AuthSessionRecord,
-} from "./sessions/auth-session.types.js";
+} from "../sessions/auth-session.types.js";
 import type {
   AuthRepository,
   AuthUserRecord,
   CreateUserData,
   UserRecord,
-} from "./auth.repository.js";
-import { UserUniqueConstraintError } from "./auth.repository.js";
+} from "../persistence/auth.repository.js";
+import { UserUniqueConstraintError } from "../persistence/auth.repository.js";
 import {
   AuthService,
   type AuthSessionManager,
@@ -27,8 +27,8 @@ import type {
   CreatedAuthSession,
   RevokeAuthSessionInput,
   RotatedAuthSession,
-} from "./sessions/auth-session.service.js";
-import type { AccessTokenPayload } from "./tokens/access-token.service.js";
+} from "../sessions/auth-session.service.js";
+import type { AccessTokenPayload } from "../tokens/access-token.service.js";
 
 const NOW = new Date("2030-01-01T00:00:00.000Z");
 const USER_ID = "11111111-1111-4111-8111-111111111111";

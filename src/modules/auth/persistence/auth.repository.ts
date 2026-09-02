@@ -1,8 +1,8 @@
 import {
   Prisma,
   type PrismaClient,
-} from "../../generated/prisma/client.js";
-import { prisma } from "../../infrastructure/database/prisma.js";
+} from "../../../generated/prisma/client.js";
+import { prisma } from "../../../infrastructure/database/prisma.js";
 
 export type UserStatus = "ACTIVE" | "DISABLED";
 export type UserUniqueField = "email" | "username";

@@ -2,8 +2,8 @@ import { encodeCursor } from "../../shared/pagination/cursor.js";
 import {
   InvalidTokenError,
   UsernameAlreadyInUseError,
-} from "../auth/auth.errors.js";
-import { UserUniqueConstraintError } from "../auth/auth.repository.js";
+} from "../auth/domain/auth.errors.js";
+import { UserUniqueConstraintError } from "../auth/persistence/auth.repository.js";
 import type {
   SearchableUserRecord,
   UsersRepository,

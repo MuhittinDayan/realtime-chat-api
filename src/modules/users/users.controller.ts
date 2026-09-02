@@ -1,4 +1,4 @@
-import { requireAuthContext } from "../auth/auth.middleware.js";
+import { requireAuthContext } from "../auth/http/auth.middleware.js";
 import type { ValidatedRequestHandler } from "../../http/validation/request-validation.js";
 import type {
   SearchUsersQuery,

@@ -1,7 +1,7 @@
 import type { Namespace } from "socket.io";
 import { z } from "zod";
 
-import type { AccessAuthenticator } from "../../modules/auth/auth.middleware.js";
+import type { AccessAuthenticator } from "../../modules/auth/http/auth.middleware.js";
 import type { ConversationAccessService } from "../../modules/messages/message.service.js";
 import type { Clock } from "../../shared/time/clock.js";
 import { createSocketAuthenticationMiddleware } from "../auth/socket-auth.middleware.js";

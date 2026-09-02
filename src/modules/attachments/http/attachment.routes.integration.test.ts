@@ -6,7 +6,7 @@ import { createApp } from "../../../app.ts";
 import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
-} from "../../auth/auth.middleware.ts";
+} from "../../auth/http/auth.middleware.js";
 import {
   AttachmentController,
   type AttachmentHttpService,

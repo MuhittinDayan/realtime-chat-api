@@ -2,14 +2,14 @@ import { Router, type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { createApp } from "../../app.js";
-import { createHttpRateLimiter } from "../../http/middleware/rate-limit.js";
-import type { Clock } from "../../shared/time/clock.js";
+import { createApp } from "../../../app.js";
+import { createHttpRateLimiter } from "../../../http/middleware/rate-limit.js";
+import type { Clock } from "../../../shared/time/clock.js";
 import {
   EmailAlreadyInUseError,
   InvalidCredentialsError,
   InvalidTokenError,
-} from "./auth.errors.js";
+} from "../domain/auth.errors.js";
 import { AuthController, type AuthHttpService } from "./auth.controller.js";
 import {
   createAuthenticationMiddleware,
@@ -23,7 +23,7 @@ import type {
   ListAuthSessionsResult,
   PublicUser,
   RefreshResult,
-} from "./auth.service.js";
+} from "../application/auth.contracts.js";
 import { createAuthRouter } from "./auth.routes.js";
 import { HttpRefreshCookieManager } from "./refresh-cookie.js";
 

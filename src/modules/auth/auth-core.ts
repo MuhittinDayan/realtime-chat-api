@@ -1,8 +1,8 @@
 import { env } from "../../config/env.js";
 import { socketSessionRevocationPublisher } from "../../realtime/auth/session-revocation-publisher.js";
 import { systemClock } from "../../shared/time/clock.js";
-import { PrismaAuthRepository } from "./auth.repository.js";
-import { AuthService } from "./auth.service.js";
+import { AuthService } from "./application/auth.service.js";
+import { PrismaAuthRepository } from "./persistence/auth.repository.js";
 import {
   DUMMY_PASSWORD_HASH,
   hashPassword,

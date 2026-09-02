@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { prisma } from "../../infrastructure/database/prisma.js";
-import type { Clock } from "../../shared/time/clock.js";
-import { UsernameAlreadyInUseError, InvalidTokenError } from "./auth.errors.js";
+import { prisma } from "../../../infrastructure/database/prisma.js";
+import type { Clock } from "../../../shared/time/clock.js";
+import { UsernameAlreadyInUseError, InvalidTokenError } from "../domain/auth.errors.js";
 import { PrismaAuthRepository } from "./auth.repository.js";
-import { AuthService, type PasswordService } from "./auth.service.js";
-import { PrismaAuthSessionRepository } from "./sessions/auth-session.repository.js";
-import { AuthSessionService } from "./sessions/auth-session.service.js";
-import { AccessTokenService } from "./tokens/access-token.service.js";
-import { PrismaUsersRepository } from "../users/users.repository.js";
-import { UsersService } from "../users/users.service.js";
+import { AuthService, type PasswordService } from "../application/auth.service.js";
+import { PrismaAuthSessionRepository } from "../sessions/auth-session.repository.js";
+import { AuthSessionService } from "../sessions/auth-session.service.js";
+import { AccessTokenService } from "../tokens/access-token.service.js";
+import { PrismaUsersRepository } from "../../users/users.repository.js";
+import { UsersService } from "../../users/users.service.js";
 
 const NOW = new Date("2030-01-01T00:00:00.000Z");
 const USER_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

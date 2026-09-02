@@ -1,14 +1,14 @@
 import { Router, type RequestHandler } from "express";
 
-import { env } from "../../config/env.js";
+import { env } from "../../../config/env.js";
 import {
   loginRateLimit,
   passwordChangeRateLimit,
   refreshRateLimit,
   registerRateLimit,
-} from "../../http/middleware/rate-limit.js";
-import { systemClock } from "../../shared/time/clock.js";
-import { authService } from "./auth-core.js";
+} from "../../../http/middleware/rate-limit.js";
+import { systemClock } from "../../../shared/time/clock.js";
+import { authService } from "../auth-core.js";
 import { AuthController } from "./auth.controller.js";
 import {
   createAuthenticationMiddleware,
@@ -21,7 +21,7 @@ import {
   registerSchema,
 } from "./auth.schema.js";
 import { withValidatedBody } from "./auth.validation.js";
-import { withValidatedParams } from "../../http/validation/request-validation.js";
+import { withValidatedParams } from "../../../http/validation/request-validation.js";
 import { HttpRefreshCookieManager } from "./refresh-cookie.js";
 
 export interface CreateAuthRouterOptions {

@@ -7,7 +7,7 @@ import { createHttpRateLimiter } from "../../http/middleware/rate-limit.js";
 import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
-} from "../auth/auth.middleware.js";
+} from "../auth/http/auth.middleware.js";
 import { UsersController, type UsersHttpService } from "../users/users.controller.js";
 import type {
   SearchUsersQuery,

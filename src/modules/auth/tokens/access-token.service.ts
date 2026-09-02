@@ -8,7 +8,7 @@ import {
   systemClock,
   toUnixTimeSeconds,
 } from "../../../shared/time/clock.js";
-import { InvalidTokenError } from "../auth.errors.js";
+import { InvalidTokenError } from "../domain/auth.errors.js";
 
 const ACCESS_TOKEN_ALGORITHM = "HS256";
 const MINIMUM_SECRET_BYTES = 32;

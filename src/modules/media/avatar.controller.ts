@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 
 import type { ValidatedRequestHandler } from "../../http/validation/request-validation.js";
-import { requireAuthContext } from "../auth/auth.middleware.js";
+import { requireAuthContext } from "../auth/http/auth.middleware.js";
 import type {
   AvatarUploadParams,
   CreateAvatarUploadInput,

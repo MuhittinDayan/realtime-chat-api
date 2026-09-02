@@ -6,8 +6,8 @@ import {
   StorageObjectTooLargeError,
   type ObjectStorage,
 } from "../../infrastructure/storage/index.js";
-import { InvalidTokenError } from "../auth/auth.errors.js";
-import type { UserRecord } from "../auth/auth.repository.js";
+import { InvalidTokenError } from "../auth/domain/auth.errors.js";
+import type { UserRecord } from "../auth/persistence/auth.repository.js";
 import type { CurrentUserProfile } from "../users/users.service.js";
 import {
   isAvatarContentType,

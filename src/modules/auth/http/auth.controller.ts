@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 
-import { InvalidRefreshTokenError } from "./auth.errors.js";
+import { InvalidRefreshTokenError } from "../domain/auth.errors.js";
 import { requireAuthContext } from "./auth.middleware.js";
 import type {
   AuthSessionParams,
@@ -14,7 +14,7 @@ import type {
   ListAuthSessionsResult,
   PublicUser,
   RefreshResult,
-} from "./auth.service.js";
+} from "../application/auth.contracts.js";
 import type { ValidatedBodyHandler } from "./auth.validation.js";
 import type { RefreshCookieManager } from "./refresh-cookie.js";
 
