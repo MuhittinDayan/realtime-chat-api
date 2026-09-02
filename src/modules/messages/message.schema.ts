@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { decodeCursor } from "../../shared/pagination/cursor.js";
-import { MAX_ATTACHMENTS_PER_MESSAGE } from "../attachments/attachment.constants.js";
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "../attachments/domain/attachment.constants.ts";
 
 export interface MessageHistoryCursor {
   createdAt: Date;

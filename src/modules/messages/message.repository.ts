@@ -8,12 +8,12 @@ import { ConversationNotFoundError } from "../conversations/conversation.errors.
 import {
   AttachmentBindingError,
   MessageAttachmentsTotalSizeExceededError,
-} from "../attachments/attachment.errors.js";
+} from "../attachments/domain/attachment.errors.ts";
 import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_MESSAGE_ATTACHMENTS_TOTAL_BYTES,
-} from "../attachments/attachment.constants.js";
-import type { AttachmentKind } from "../attachments/attachment.constants.js";
+} from "../attachments/domain/attachment.constants.ts";
+import type { AttachmentKind } from "../attachments/domain/attachment.constants.ts";
 import type { MessageHistoryCursor } from "./message.schema.js";
 
 export interface MessageAttachmentRecord {
@@ -172,7 +172,7 @@ function isMessageIdempotencyConflict(error: unknown): boolean {
 }
 
 export class PrismaMessageRepository implements MessageRepository {
-  constructor(private readonly client: PrismaClient = prisma) {}
+  constructor(private readonly client: PrismaClient = prisma) { }
 
   async createMessage(
     input: CreateMessageRepositoryInput,
@@ -330,14 +330,14 @@ export class PrismaMessageRepository implements MessageRepository {
         ...(input.before === undefined
           ? {}
           : {
-              OR: [
-                { createdAt: { lt: input.before.createdAt } },
-                {
-                  createdAt: input.before.createdAt,
-                  id: { lt: input.before.id },
-                },
-              ],
-            }),
+            OR: [
+              { createdAt: { lt: input.before.createdAt } },
+              {
+                createdAt: input.before.createdAt,
+                id: { lt: input.before.id },
+              },
+            ],
+          }),
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: input.take,

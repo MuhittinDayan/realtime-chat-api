@@ -2,14 +2,14 @@ import { ConversationNotFoundError } from "../conversations/conversation.errors.
 import { encodeCursor } from "../../shared/pagination/cursor.js";
 import { systemClock, type Clock } from "../../shared/time/clock.js";
 import { MessageNotFoundError } from "./message.errors.js";
-import type { MessageAttachmentDto } from "../attachments/attachment.service.js";
+import type { MessageAttachmentDto } from "../attachments/application/attachment.service.ts";
 import {
   ATTACHMENT_DOCX_CONTENT_TYPE,
   ATTACHMENT_PDF_CONTENT_TYPE,
   ATTACHMENT_PPTX_CONTENT_TYPE,
   ATTACHMENT_XLSX_CONTENT_TYPE,
   type AttachmentContentType,
-} from "../attachments/attachment.constants.js";
+} from "../attachments/domain/attachment.constants.ts";
 import type {
   MessageRecord,
   MessageRepository,
@@ -70,7 +70,7 @@ export class MessageService {
     private readonly messagePublisher: MessagePublisher,
     private readonly clock: Clock = systemClock,
     private readonly deletedAttachmentRetentionMs = 2_592_000_000,
-  ) {}
+  ) { }
 
   async createMessage(
     userId: string,
@@ -81,21 +81,21 @@ export class MessageService {
     const repositoryInput =
       input.content.type === "media"
         ? {
-            conversationId,
-            senderId: userId,
-            clientMessageId: input.clientMessageId,
-            kind: "MEDIA" as const,
-            body: input.content.text ?? null,
-            attachmentIds: input.content.attachmentIds,
-          }
+          conversationId,
+          senderId: userId,
+          clientMessageId: input.clientMessageId,
+          kind: "MEDIA" as const,
+          body: input.content.text ?? null,
+          attachmentIds: input.content.attachmentIds,
+        }
         : {
-            conversationId,
-            senderId: userId,
-            clientMessageId: input.clientMessageId,
-            kind: "TEXT" as const,
-            body: input.content.text,
-            attachmentIds: [],
-          };
+          conversationId,
+          senderId: userId,
+          clientMessageId: input.clientMessageId,
+          kind: "TEXT" as const,
+          body: input.content.text,
+          attachmentIds: [],
+        };
     const result = await this.messageRepository.createMessage(repositoryInput);
     const message = toMessageDto(result.message);
 

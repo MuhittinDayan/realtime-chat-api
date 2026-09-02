@@ -15,7 +15,7 @@ import type { UserRecord } from "../auth/auth.repository.js";
 import type {
   AttachmentCleanupCandidate,
   AttachmentRepository,
-} from "../attachments/attachment.repository.js";
+} from "../attachments/persistence/attachment.repository.js";
 import { AvatarCleanupService } from "./avatar-cleanup.service.js";
 import type {
   AvatarAssetRecord,
@@ -77,8 +77,8 @@ class CleanupRepository implements AvatarRepository {
   async claimForProcessing() {
     return false;
   }
-  async releaseProcessing() {}
-  async markRejected() {}
+  async releaseProcessing() { }
+  async markRejected() { }
   async completeAvatar(_data: CompleteAvatarData): Promise<UserRecord | null> {
     return null;
   }

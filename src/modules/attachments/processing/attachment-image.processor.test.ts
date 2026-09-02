@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
-import { InvalidAttachmentFileError } from "./attachment.errors.js";
+import { InvalidAttachmentFileError } from "../domain/attachment.errors.ts";
 import { SharpAttachmentImageProcessor } from "./attachment-image.processor.js";
 
 describe("message attachment image processor", () => {

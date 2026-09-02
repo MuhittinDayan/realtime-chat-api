@@ -2,22 +2,22 @@ import { Router, type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { createApp } from "../../app.js";
+import { createApp } from "../../../app.ts";
 import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
-} from "../auth/auth.middleware.js";
+} from "../../auth/auth.middleware.ts";
 import {
   AttachmentController,
   type AttachmentHttpService,
-} from "./attachment.controller.js";
+} from "./attachment.controller.ts";
 import {
   MAX_IMAGE_ATTACHMENT_BYTES,
   MAX_OFFICE_ATTACHMENT_BYTES,
   MAX_PDF_ATTACHMENT_BYTES,
-} from "./attachment.constants.js";
-import { createAttachmentRouter } from "./attachment.routes.js";
-import type { CreateAttachmentUploadInput } from "./attachment.schema.js";
+} from "../domain/attachment.constants.ts";
+import { createAttachmentRouter } from "./attachment.routes.ts";
+import type { CreateAttachmentUploadInput } from "./attachment.schema.ts";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const CONVERSATION_ID = "22222222-2222-4222-8222-222222222222";
@@ -208,7 +208,7 @@ describe("message attachment HTTP routes", () => {
     const response = await request(createTestApp(service))
       .get(
         `/api/v1/conversations/${CONVERSATION_ID}` +
-          `/attachments/${ATTACHMENT_ID}/thumbnail`,
+        `/attachments/${ATTACHMENT_ID}/thumbnail`,
       )
       .set("Authorization", "Bearer token")
       .expect(307);

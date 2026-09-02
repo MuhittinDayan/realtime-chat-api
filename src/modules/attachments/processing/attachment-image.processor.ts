@@ -5,8 +5,8 @@ import {
   MAX_ATTACHMENT_DIMENSION,
   MAX_ATTACHMENT_OUTPUT_DIMENSION,
   type AttachmentContentType,
-} from "./attachment.constants.js";
-import { InvalidAttachmentFileError } from "./attachment.errors.js";
+} from "../domain/attachment.constants.ts";
+import { InvalidAttachmentFileError } from "../domain/attachment.errors.ts";
 
 export interface ProcessedAttachmentImage {
   originalBody: Uint8Array;
@@ -27,8 +27,7 @@ const detectedContentTypes = {
 } as const;
 
 export class SharpAttachmentImageProcessor
-  implements AttachmentImageProcessor
-{
+  implements AttachmentImageProcessor {
   async process(input: Uint8Array): Promise<ProcessedAttachmentImage> {
     try {
       const source = sharp(input, {
@@ -42,8 +41,8 @@ export class SharpAttachmentImageProcessor
         metadata.format === undefined
           ? undefined
           : detectedContentTypes[
-              metadata.format as keyof typeof detectedContentTypes
-            ];
+          metadata.format as keyof typeof detectedContentTypes
+          ];
 
       if (
         detectedContentType === undefined ||

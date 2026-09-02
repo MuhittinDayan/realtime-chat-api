@@ -10,32 +10,32 @@ import type {
   PutStoredObjectInput,
   StoredObject,
   StoredObjectMetadata,
-} from "../../infrastructure/storage/index.js";
-import { StorageObjectTooLargeError } from "../../infrastructure/storage/index.js";
+} from "../../../infrastructure/storage/index.ts";
+import { StorageObjectTooLargeError } from "../../../infrastructure/storage/index.ts";
 import {
   AttachmentKindMismatchError,
   AttachmentScanUnavailableError,
   InvalidAttachmentFileError,
   UnsupportedAttachmentFormatError,
-} from "./attachment.errors.js";
+} from "../domain/attachment.errors.ts";
 import type {
   AttachmentImageProcessor,
   ProcessedAttachmentImage,
-} from "./attachment-image.processor.js";
-import type { AttachmentFileTypeDetector } from "./attachment-file-type.js";
-import type { AttachmentPdfProcessor } from "./attachment-pdf.processor.js";
+} from "../processing/attachment-image.processor.ts";
+import type { AttachmentFileTypeDetector } from "../processing/attachment-file-type.ts";
+import type { AttachmentPdfProcessor } from "../processing/attachment-pdf.processor.ts";
 import {
   ClamAvUnavailableError,
   type AttachmentMalwareScanResult,
   type AttachmentMalwareScanner,
-} from "./clamav-scanner.js";
+} from "../processing/clamav-scanner.ts";
 import type {
   AttachmentClaimResult,
   AttachmentRecord,
   AttachmentRepository,
   CompleteAttachmentData,
   CreatePendingAttachmentData,
-} from "./attachment.repository.js";
+} from "../persistence/attachment.repository.ts";
 import {
   AttachmentService,
   type AttachmentConversationAccessService,
@@ -79,8 +79,7 @@ function pendingAttachment(
 }
 
 class MutableConversationAccess
-  implements AttachmentConversationAccessService
-{
+  implements AttachmentConversationAccessService {
   allowed = true;
 
   async isActiveMember(): Promise<boolean> {
@@ -121,7 +120,7 @@ class FakeAttachmentRepository implements AttachmentRepository {
     return this.claimResult;
   }
 
-  async releaseProcessing() {}
+  async releaseProcessing() { }
   async releaseProcessingForRetry() {
     this.releasedForRetry = true;
     if (this.attachment !== null) this.attachment.status = "PENDING";
@@ -147,7 +146,7 @@ class FakeAttachmentRepository implements AttachmentRepository {
     return "COMPLETED" as const;
   }
 
-  async clearIncomingObjectKey() {}
+  async clearIncomingObjectKey() { }
 
   async findAccessibleAttachment() {
     return this.attachment;

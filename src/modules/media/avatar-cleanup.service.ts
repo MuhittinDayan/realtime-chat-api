@@ -6,7 +6,7 @@ import type {
 import type {
   AttachmentCleanupCandidate,
   AttachmentRepository,
-} from "../attachments/attachment.repository.js";
+} from "../attachments/persistence/attachment.repository.js";
 
 export interface AvatarCleanupConfig {
   avatarBucket: string;
@@ -29,7 +29,7 @@ export class AvatarCleanupService {
     private readonly config: AvatarCleanupConfig,
     private readonly now: () => Date = () => new Date(),
     private readonly attachmentRepository?: AttachmentRepository,
-  ) {}
+  ) { }
 
   async runOnce(): Promise<AvatarCleanupResult> {
     const now = this.now();

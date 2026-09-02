@@ -1,19 +1,19 @@
 import { Router, type RequestHandler } from "express";
 
-import { messageCreateRateLimit } from "../../http/middleware/rate-limit.js";
+import { messageCreateRateLimit } from "../../../http/middleware/rate-limit.ts";
 import {
   validateParams,
   withValidatedBody,
   withValidatedParams,
-} from "../../http/validation/request-validation.js";
-import { conversationParamsSchema } from "../conversations/conversation.schema.js";
-import { attachmentController } from "./attachment-core.js";
-import type { AttachmentController } from "./attachment.controller.js";
+} from "../../../http/validation/request-validation.ts";
+import { conversationParamsSchema } from "../../conversations/conversation.schema.ts";
+import { attachmentController } from "../attachment-core.ts";
+import type { AttachmentController } from "./attachment.controller.ts";
 import {
   attachmentAccessParamsSchema,
   attachmentUploadParamsSchema,
   createAttachmentUploadSchema,
-} from "./attachment.schema.js";
+} from "./attachment.schema.ts";
 
 export function createAttachmentRouter(
   controller: AttachmentController,

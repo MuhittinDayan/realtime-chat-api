@@ -1,4 +1,4 @@
-import { AppError } from "../../shared/errors/app-error.js";
+import { AppError } from "../../../shared/errors/app-error.ts";
 
 export class UnsupportedAttachmentFormatError extends AppError {
   constructor() {
