@@ -1,12 +1,12 @@
 import {
   Prisma,
   type PrismaClient,
-} from "../../generated/prisma/client.js";
-import { prisma } from "../../infrastructure/database/prisma.js";
+} from "../../../generated/prisma/client.js";
+import { prisma } from "../../../infrastructure/database/prisma.js";
 import type {
   AttachmentContentType,
   AttachmentKind,
-} from "./attachment.constants.js";
+} from "../domain/attachment.constants.ts";
 
 export type AttachmentAssetStatus =
   | "PENDING"
@@ -41,7 +41,7 @@ export interface AttachmentRecord {
   updatedAt: Date;
 }
 
-export interface AttachmentCleanupCandidate extends AttachmentRecord {}
+export interface AttachmentCleanupCandidate extends AttachmentRecord { }
 
 export interface CreatePendingAttachmentData {
   id: string;
@@ -192,7 +192,7 @@ async function hasActiveMembership(
 }
 
 export class PrismaAttachmentRepository implements AttachmentRepository {
-  constructor(private readonly client: PrismaClient = prisma) {}
+  constructor(private readonly client: PrismaClient = prisma) { }
 
   async createPendingAttachment(
     data: CreatePendingAttachmentData,

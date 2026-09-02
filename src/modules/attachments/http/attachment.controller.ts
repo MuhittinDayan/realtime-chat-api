@@ -1,15 +1,15 @@
-import type { ValidatedRequestHandler } from "../../http/validation/request-validation.js";
-import { requireAuthContext } from "../auth/auth.middleware.js";
+import type { ValidatedRequestHandler } from "../../../http/validation/request-validation.ts";
+import { requireAuthContext } from "../../auth/auth.middleware.ts";
 import type {
   AttachmentAccessParams,
   AttachmentUploadParams,
   CreateAttachmentUploadInput,
-} from "./attachment.schema.js";
+} from "./attachment.schema.ts";
 import type {
   AttachmentService,
   AttachmentUploadIntent,
   MessageAttachmentDto,
-} from "./attachment.service.js";
+} from "../application/attachment.service.ts";
 
 export interface AttachmentHttpService {
   createUpload(
@@ -31,7 +31,7 @@ export interface AttachmentHttpService {
 }
 
 export class AttachmentController {
-  constructor(private readonly attachmentService: AttachmentHttpService) {}
+  constructor(private readonly attachmentService: AttachmentHttpService) { }
 
   readonly createUpload: ValidatedRequestHandler<CreateAttachmentUploadInput> =
     async (request, response, input): Promise<void> => {

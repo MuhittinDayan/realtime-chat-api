@@ -6,7 +6,7 @@ import {
 import { logger } from "../../shared/logging/logger.js";
 import { AvatarCleanupService } from "./avatar-cleanup.service.js";
 import { PrismaAvatarRepository } from "./avatar.repository.js";
-import { PrismaAttachmentRepository } from "../attachments/attachment.repository.js";
+import { PrismaAttachmentRepository } from "../attachments/persistence/attachment.repository.js";
 
 export interface CleanupLogger {
   debug(context: object, message: string): void;

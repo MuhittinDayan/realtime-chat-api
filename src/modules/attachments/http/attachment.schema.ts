@@ -5,7 +5,7 @@ import {
   isAttachmentContentType,
   maximumAttachmentBytesForKind,
   MAX_PDF_ATTACHMENT_BYTES,
-} from "./attachment.constants.js";
+} from "../domain/attachment.constants.ts";
 
 export const createAttachmentUploadSchema = z
   .object({

@@ -4,7 +4,7 @@ import {
   ATTACHMENT_DOCX_CONTENT_TYPE,
   ATTACHMENT_PPTX_CONTENT_TYPE,
   ATTACHMENT_XLSX_CONTENT_TYPE,
-} from "./attachment.constants.js";
+} from "../domain/attachment.constants.ts";
 import { MagicByteAttachmentFileTypeDetector } from "./attachment-file-type.js";
 
 const OOXML_CASES = [

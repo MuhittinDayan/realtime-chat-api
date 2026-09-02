@@ -7,7 +7,7 @@ import {
   ATTACHMENT_PPTX_CONTENT_TYPE,
   ATTACHMENT_XLSX_CONTENT_TYPE,
   type AttachmentContentType,
-} from "./attachment.constants.js";
+} from "../domain/attachment.constants.ts";
 
 const ZIP_LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
@@ -32,8 +32,7 @@ export interface AttachmentFileTypeDetector {
 }
 
 export class MagicByteAttachmentFileTypeDetector
-  implements AttachmentFileTypeDetector
-{
+  implements AttachmentFileTypeDetector {
   async detect(body: Uint8Array): Promise<string | null> {
     const detected = await fileTypeFromBuffer(body);
 
@@ -229,11 +228,11 @@ function findEndOfCentralDirectory(view: DataView): number {
   ) {
     if (
       view.getUint32(offset, true) ===
-        ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE &&
+      ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE &&
       offset +
-        ZIP_END_OF_CENTRAL_DIRECTORY_BYTES +
-        view.getUint16(offset + 20, true) ===
-        view.byteLength
+      ZIP_END_OF_CENTRAL_DIRECTORY_BYTES +
+      view.getUint16(offset + 20, true) ===
+      view.byteLength
     ) {
       return offset;
     }
@@ -256,10 +255,10 @@ function readZipEntry(body: Uint8Array, entry: ZipEntry): Uint8Array {
 
   if (
     view.getUint32(entry.localHeaderOffset, true) !==
-      ZIP_LOCAL_FILE_HEADER_SIGNATURE ||
+    ZIP_LOCAL_FILE_HEADER_SIGNATURE ||
     (view.getUint16(entry.localHeaderOffset + 6, true) & 0x1) !== 0 ||
     view.getUint16(entry.localHeaderOffset + 8, true) !==
-      entry.compressionMethod
+    entry.compressionMethod
   ) {
     throw new Error("Invalid ZIP local file header");
   }

@@ -1,29 +1,29 @@
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { env } from "../../config/env.js";
-import { prisma } from "../../infrastructure/database/prisma.js";
+import { env } from "../../../config/env.ts";
+import { prisma } from "../../../infrastructure/database/prisma.ts";
 import {
   objectStorage,
   storageBuckets,
   storageSettings,
   StorageObjectNotFoundError,
-} from "../../infrastructure/storage/index.js";
+} from "../../../infrastructure/storage/index.ts";
 import {
   AttachmentBindingError,
   AttachmentNotFoundError,
-} from "./attachment.errors.js";
-import { PrismaConversationRepository } from "../conversations/conversation.repository.js";
-import { ConversationService } from "../conversations/conversation.service.js";
-import { PrismaMessageRepository } from "../messages/message.repository.js";
-import { MessageService } from "../messages/message.service.js";
-import { SharpAttachmentImageProcessor } from "./attachment-image.processor.js";
-import { PrismaAttachmentRepository } from "./attachment.repository.js";
-import { AttachmentService } from "./attachment.service.js";
-import { PdfJsAttachmentPdfProcessor } from "./attachment-pdf.processor.js";
-import { ClamAvAttachmentScanner } from "./clamav-scanner.js";
-import { AvatarCleanupService } from "../media/avatar-cleanup.service.js";
-import { PrismaAvatarRepository } from "../media/avatar.repository.js";
+} from "../domain/attachment.errors.ts";
+import { PrismaConversationRepository } from "../../conversations/conversation.repository.ts";
+import { ConversationService } from "../../conversations/conversation.service.ts";
+import { PrismaMessageRepository } from "../../messages/message.repository.ts";
+import { MessageService } from "../../messages/message.service.ts";
+import { SharpAttachmentImageProcessor } from "../processing/attachment-image.processor.ts";
+import { PrismaAttachmentRepository } from "./attachment.repository.ts";
+import { AttachmentService } from "../application/attachment.service.ts";
+import { PdfJsAttachmentPdfProcessor } from "../processing/attachment-pdf.processor.ts";
+import { ClamAvAttachmentScanner } from "../processing/clamav-scanner.ts";
+import { AvatarCleanupService } from "../../media/avatar-cleanup.service.ts";
+import { PrismaAvatarRepository } from "../../media/avatar.repository.ts";
 
 const ALICE_ID = "71000000-0000-4000-8000-000000000001";
 const BOB_ID = "71000000-0000-4000-8000-000000000002";
@@ -697,9 +697,9 @@ describe("phase 14b/14c real PostgreSQL, MinIO, and ClamAV behavior", () => {
       () =>
         new Date(
           NOW.getTime() +
-            storageSettings.avatarUploadUrlTtlSeconds * 1_000 +
-            storageSettings.staleUploadAgeMs +
-            1,
+          storageSettings.avatarUploadUrlTtlSeconds * 1_000 +
+          storageSettings.staleUploadAgeMs +
+          1,
         ),
       new PrismaAttachmentRepository(prisma),
     );
@@ -795,11 +795,11 @@ function buildMinimalPdf(content = "", encrypted = false): Uint8Array {
     `<< /Length ${String(Buffer.byteLength(content))} >>\nstream\n${content}\nendstream`,
     ...(encrypted
       ? [
-          "<< /Filter /Standard /V 1 /R 2 " +
-            "/O <0000000000000000000000000000000000000000000000000000000000000000> " +
-            "/U <0000000000000000000000000000000000000000000000000000000000000000> " +
-            "/P -4 >>",
-        ]
+        "<< /Filter /Standard /V 1 /R 2 " +
+        "/O <0000000000000000000000000000000000000000000000000000000000000000> " +
+        "/U <0000000000000000000000000000000000000000000000000000000000000000> " +
+        "/P -4 >>",
+      ]
       : []),
   ];
   const offsets = [0];
@@ -819,8 +819,8 @@ function buildMinimalPdf(content = "", encrypted = false): Uint8Array {
 
   const encryptionTrailer = encrypted
     ? " /Encrypt 5 0 R " +
-      "/ID [<00112233445566778899AABBCCDDEEFF>" +
-      "<00112233445566778899AABBCCDDEEFF>]"
+    "/ID [<00112233445566778899AABBCCDDEEFF>" +
+    "<00112233445566778899AABBCCDDEEFF>]"
     : "";
   source +=
     `trailer\n<< /Size ${String(objects.length + 1)} ` +
