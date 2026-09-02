@@ -6,7 +6,7 @@ import { prisma } from "../../infrastructure/database/prisma.js";
 import {
   toUserUniqueConstraintError,
   type UserRecord,
-} from "../auth/auth.repository.js";
+} from "../auth/persistence/auth.repository.js";
 import type {
   UpdateCurrentUserInput,
   UserSearchCursor,

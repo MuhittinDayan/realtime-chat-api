@@ -3,7 +3,7 @@ import {
   type PrismaClient,
 } from "../../generated/prisma/client.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
-import type { UserRecord } from "../auth/auth.repository.js";
+import type { UserRecord } from "../auth/persistence/auth.repository.js";
 import type { AvatarContentType } from "./avatar.constants.js";
 
 export type AvatarAssetStatus =

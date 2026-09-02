@@ -7,7 +7,7 @@ import {
   withValidatedQuery,
 } from "../../http/validation/request-validation.js";
 import { authService } from "../auth/auth-core.js";
-import { createAuthenticationMiddleware } from "../auth/auth.middleware.js";
+import { createAuthenticationMiddleware } from "../auth/http/auth.middleware.js";
 import { attachmentRouter } from "../attachments/http/attachment.routes.ts";
 import { messageRouter } from "../messages/message.routes.js";
 import { readRouter } from "../reads/read.routes.js";

@@ -17,21 +17,21 @@ export {
   SessionRevokedError,
   UserAlreadyExistsError,
   UsernameAlreadyInUseError,
-} from "./auth.errors.js";
-export { PrismaAuthRepository } from "./auth.repository.js";
+} from "./domain/auth.errors.js";
+export { PrismaAuthRepository } from "./persistence/auth.repository.js";
 export type {
   AuthRepository,
   AuthUserRecord,
   CreateUserData,
   UserRecord,
-} from "./auth.repository.js";
-export { AuthService } from "./auth.service.js";
+} from "./persistence/auth.repository.js";
+export { AuthService } from "./application/auth.service.js";
 export type {
   AuthResult,
   AuthServiceDependencies,
   PublicUser,
   RefreshResult,
-} from "./auth.service.js";
+} from "./application/auth.contracts.js";
 export {
   DUMMY_PASSWORD_HASH,
   hashPassword,

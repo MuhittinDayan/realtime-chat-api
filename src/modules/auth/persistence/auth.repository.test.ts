@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   Prisma,
   type PrismaClient,
-} from "../../generated/prisma/client.js";
+} from "../../../generated/prisma/client.js";
 import {
   PrismaAuthRepository,
   UserUniqueConstraintError,

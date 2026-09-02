@@ -11,7 +11,7 @@ import type {
   StoredObject,
   StoredObjectMetadata,
 } from "../../infrastructure/storage/index.js";
-import type { UserRecord } from "../auth/auth.repository.js";
+import type { UserRecord } from "../auth/persistence/auth.repository.js";
 import type {
   AttachmentCleanupCandidate,
   AttachmentRepository,

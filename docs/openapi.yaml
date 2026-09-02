@@ -45,9 +45,9 @@ info:
     gövdesiyle 429 ve pencere sıfırlanana kadar saniye cinsinden `Retry-After`
     döner. Kaynak: `src/http/middleware/rate-limit.ts` ve ilgili route dosyaları.
 
-    Kaynaklar: `src/modules/auth/auth.middleware.ts`,
-    `src/modules/auth/refresh-cookie.ts`, `src/modules/auth/auth.routes.ts`,
-    `src/modules/auth/auth.controller.ts`, `src/shared/pagination/cursor.ts`.
+    Kaynaklar: `src/modules/auth/http/auth.middleware.ts`,
+    `src/modules/auth/http/refresh-cookie.ts`, `src/modules/auth/http/auth.routes.ts`,
+    `src/modules/auth/http/auth.controller.ts`, `src/shared/pagination/cursor.ts`.
 servers:
   - url: http://api.chat.test:4000
     description: README'de belirtilen varsayılan geliştirme adresi
@@ -119,11 +119,11 @@ paths:
       security: []
       x-source-files:
         - src/http/middleware/rate-limit.ts
-        - src/modules/auth/auth.routes.ts
-        - src/modules/auth/auth.schema.ts
-        - src/modules/auth/auth.controller.ts
-        - src/modules/auth/auth.service.ts
-        - src/modules/auth/auth.errors.ts
+        - src/modules/auth/http/auth.routes.ts
+        - src/modules/auth/http/auth.schema.ts
+        - src/modules/auth/http/auth.controller.ts
+        - src/modules/auth/application/auth.service.ts
+        - src/modules/auth/domain/auth.errors.ts
       requestBody:
         required: true
         content:
@@ -200,11 +200,11 @@ paths:
       security: []
       x-source-files:
         - src/http/middleware/rate-limit.ts
-        - src/modules/auth/auth.routes.ts
-        - src/modules/auth/auth.schema.ts
-        - src/modules/auth/auth.controller.ts
-        - src/modules/auth/auth.service.ts
-        - src/modules/auth/auth.errors.ts
+        - src/modules/auth/http/auth.routes.ts
+        - src/modules/auth/http/auth.schema.ts
+        - src/modules/auth/http/auth.controller.ts
+        - src/modules/auth/application/auth.service.ts
+        - src/modules/auth/domain/auth.errors.ts
       requestBody:
         required: true
         content:
@@ -262,16 +262,16 @@ paths:
       summary: Refresh token'ı döndürerek yeni access token alma
       operationId: refreshAccessToken
       description: IP başına 5 dakikada 30 istekle sınırlıdır.
-      # Cookie/Origin kaynakları: src/modules/auth/refresh-cookie.ts,
-      # src/modules/auth/auth.middleware.ts, src/modules/auth/auth.routes.ts.
+      # Cookie/Origin kaynakları: src/modules/auth/http/refresh-cookie.ts,
+      # src/modules/auth/http/auth.middleware.ts, src/modules/auth/http/auth.routes.ts.
       security:
         - refreshCookie: []
       x-source-files:
         - src/http/middleware/rate-limit.ts
-        - src/modules/auth/auth.routes.ts
-        - src/modules/auth/auth.controller.ts
-        - src/modules/auth/auth.middleware.ts
-        - src/modules/auth/refresh-cookie.ts
+        - src/modules/auth/http/auth.routes.ts
+        - src/modules/auth/http/auth.controller.ts
+        - src/modules/auth/http/auth.middleware.ts
+        - src/modules/auth/http/refresh-cookie.ts
         - src/modules/auth/sessions/auth-session.service.ts
       parameters:
         - $ref: "#/components/parameters/ProductionOrigin"
@@ -312,16 +312,16 @@ paths:
       tags: [Auth]
       summary: Mevcut access token'a ait oturumu iptal etme
       operationId: logout
-      # Bearer/Origin kaynakları: src/modules/auth/auth.middleware.ts,
-      # src/modules/auth/auth.routes.ts. Cookie temizleme kaynağı:
-      # src/modules/auth/refresh-cookie.ts.
+      # Bearer/Origin kaynakları: src/modules/auth/http/auth.middleware.ts,
+      # src/modules/auth/http/auth.routes.ts. Cookie temizleme kaynağı:
+      # src/modules/auth/http/refresh-cookie.ts.
       security:
         - bearerAuth: []
       x-source-files:
-        - src/modules/auth/auth.routes.ts
-        - src/modules/auth/auth.controller.ts
-        - src/modules/auth/auth.middleware.ts
-        - src/modules/auth/refresh-cookie.ts
+        - src/modules/auth/http/auth.routes.ts
+        - src/modules/auth/http/auth.controller.ts
+        - src/modules/auth/http/auth.middleware.ts
+        - src/modules/auth/http/refresh-cookie.ts
       parameters:
         - $ref: "#/components/parameters/ProductionOrigin"
       responses:
@@ -349,10 +349,10 @@ paths:
       security:
         - bearerAuth: []
       x-source-files:
-        - src/modules/auth/auth.routes.ts
-        - src/modules/auth/auth.controller.ts
-        - src/modules/auth/auth.middleware.ts
-        - src/modules/auth/auth.service.ts
+        - src/modules/auth/http/auth.routes.ts
+        - src/modules/auth/http/auth.controller.ts
+        - src/modules/auth/http/auth.middleware.ts
+        - src/modules/auth/application/auth.service.ts
       responses:
         "200":
           description: Aktif kullanıcı
@@ -390,10 +390,10 @@ paths:
         - bearerAuth: []
       x-source-files:
         - src/http/middleware/rate-limit.ts
-        - src/modules/auth/auth.routes.ts
-        - src/modules/auth/auth.schema.ts
-        - src/modules/auth/auth.controller.ts
-        - src/modules/auth/auth.service.ts
+        - src/modules/auth/http/auth.routes.ts
+        - src/modules/auth/http/auth.schema.ts
+        - src/modules/auth/http/auth.controller.ts
+        - src/modules/auth/application/auth.service.ts
       parameters:
         - $ref: "#/components/parameters/ProductionOrigin"
       requestBody:
@@ -428,9 +428,9 @@ paths:
       security:
         - bearerAuth: []
       x-source-files:
-        - src/modules/auth/auth.routes.ts
-        - src/modules/auth/auth.controller.ts
-        - src/modules/auth/auth.service.ts
+        - src/modules/auth/http/auth.routes.ts
+        - src/modules/auth/http/auth.controller.ts
+        - src/modules/auth/application/auth.service.ts
         - src/modules/auth/sessions/auth-session.repository.ts
       responses:
         "200":
@@ -453,9 +453,9 @@ paths:
       security:
         - bearerAuth: []
       x-source-files:
-        - src/modules/auth/auth.routes.ts
-        - src/modules/auth/auth.controller.ts
-        - src/modules/auth/auth.service.ts
+        - src/modules/auth/http/auth.routes.ts
+        - src/modules/auth/http/auth.controller.ts
+        - src/modules/auth/application/auth.service.ts
         - src/modules/auth/sessions/auth-session.repository.ts
       parameters:
         - $ref: "#/components/parameters/ProductionOrigin"
@@ -481,9 +481,9 @@ paths:
       security:
         - bearerAuth: []
       x-source-files:
-        - src/modules/auth/auth.routes.ts
-        - src/modules/auth/auth.controller.ts
-        - src/modules/auth/auth.service.ts
+        - src/modules/auth/http/auth.routes.ts
+        - src/modules/auth/http/auth.controller.ts
+        - src/modules/auth/application/auth.service.ts
       parameters:
         - name: sessionId
           in: path
@@ -1638,8 +1638,8 @@ components:
       description: |
         `Authorization: Bearer <access-token>`. JWT doğrulandıktan sonra token'daki
         `sid` ve `sub`, aktif ve kullanıcıya ait DB oturumuna karşı kontrol edilir.
-        Kaynak: `src/modules/auth/auth.middleware.ts`,
-        `src/modules/auth/auth.service.ts`,
+        Kaynak: `src/modules/auth/http/auth.middleware.ts`,
+        `src/modules/auth/application/auth.service.ts`,
         `src/modules/auth/sessions/auth-session.repository.ts`.
     refreshCookie:
       type: apiKey
@@ -1649,7 +1649,7 @@ components:
         Opaque refresh token. `HttpOnly`, `SameSite=Lax`,
         `Path=/api/v1/auth`; production'da `Secure`.
         Kaynak: `src/modules/auth/auth.constants.ts`,
-        `src/modules/auth/refresh-cookie.ts`.
+        `src/modules/auth/http/refresh-cookie.ts`.
 
   parameters:
     ConversationId:
@@ -1692,8 +1692,8 @@ components:
         Production ortamında zorunludur ve `FRONTEND_ORIGIN` ile bire bir
         karşılaştırılır; eşleşmezse `403 CSRF_VALIDATION_FAILED` döner.
         Development/test ortamında middleware bu kontrolü atlar.
-        Kaynak: `src/modules/auth/auth.routes.ts`,
-        `src/modules/auth/auth.middleware.ts`.
+        Kaynak: `src/modules/auth/http/auth.routes.ts`,
+        `src/modules/auth/http/auth.middleware.ts`.
       schema:
         type: string
         format: uri
@@ -1709,7 +1709,7 @@ components:
       description: |
         `chat_refresh_token=<opaque>; Path=/api/v1/auth; HttpOnly; SameSite=Lax`.
         `Max-Age` ve `Expires` session süresinden hesaplanır; production'da
-        `Secure` eklenir. Kaynak: `src/modules/auth/refresh-cookie.ts`.
+        `Secure` eklenir. Kaynak: `src/modules/auth/http/refresh-cookie.ts`.
       schema:
         type: string
     RetryAfter:

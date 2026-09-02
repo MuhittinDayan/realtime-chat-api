@@ -4,7 +4,7 @@ import { decodeCursor } from "../../shared/pagination/cursor.js";
 import {
   displayNameSchema,
   usernameSchema,
-} from "../auth/auth.schema.js";
+} from "../auth/http/auth.schema.js";
 
 export interface UserSearchCursor {
   username: string;

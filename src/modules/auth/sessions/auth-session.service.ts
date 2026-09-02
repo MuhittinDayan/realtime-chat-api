@@ -11,7 +11,7 @@ import {
   InvalidRefreshTokenError,
   SessionExpiredError,
   SessionRevokedError,
-} from "../auth.errors.js";
+} from "../domain/auth.errors.js";
 import type { AccessTokenIssuer } from "../tokens/access-token.service.js";
 import {
   refreshTokenCodec,

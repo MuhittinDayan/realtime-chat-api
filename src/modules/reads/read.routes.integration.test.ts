@@ -6,7 +6,7 @@ import { createApp } from "../../app.js";
 import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
-} from "../auth/auth.middleware.js";
+} from "../auth/http/auth.middleware.js";
 import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
 import { ReadController, type ReadHttpService } from "./read.controller.js";
 import { createReadRouter } from "./read.routes.js";

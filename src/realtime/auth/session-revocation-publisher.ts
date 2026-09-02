@@ -1,6 +1,6 @@
 import type { Namespace } from "socket.io";
 
-import type { SessionRevocationPublisher } from "../../modules/auth/auth.service.js";
+import type { SessionRevocationPublisher } from "../../modules/auth/application/auth.contracts.js";
 import { sessionRoom } from "../rooms/room-names.js";
 import type {
   ChatClientToServerEvents,

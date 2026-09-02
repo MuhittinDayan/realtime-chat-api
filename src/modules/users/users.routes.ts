@@ -15,7 +15,7 @@ import {
   storageSettings,
 } from "../../infrastructure/storage/index.js";
 import { authService } from "../auth/auth-core.js";
-import { createAuthenticationMiddleware } from "../auth/auth.middleware.js";
+import { createAuthenticationMiddleware } from "../auth/http/auth.middleware.js";
 import { AvatarController } from "../media/avatar.controller.js";
 import { SharpAvatarImageProcessor } from "../media/avatar-image.processor.js";
 import { PrismaAvatarRepository } from "../media/avatar.repository.js";

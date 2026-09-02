@@ -1,11 +1,11 @@
 import type { Request, RequestHandler } from "express";
 
-import { AppError } from "../../shared/errors/app-error.js";
+import { AppError } from "../../../shared/errors/app-error.js";
 import {
   AuthenticationRequiredError,
   CsrfValidationError,
-} from "./auth.errors.js";
-import type { AuthContext } from "./auth.types.js";
+} from "../domain/auth.errors.js";
+import type { AuthContext } from "../domain/auth.types.js";
 
 const BEARER_TOKEN_PATTERN = /^Bearer ([^\s,]+)$/iu;
 const WWW_AUTHENTICATE_VALUE = 'Bearer realm="chat-api"';

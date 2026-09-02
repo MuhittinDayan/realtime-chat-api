@@ -7,7 +7,7 @@ import { createHttpRateLimiter } from "../../http/middleware/rate-limit.js";
 import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
-} from "../auth/auth.middleware.js";
+} from "../auth/http/auth.middleware.js";
 import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
 import { MessageNotFoundError } from "./message.errors.js";
 import { MessageController, type MessageHttpService } from "./message.controller.js";

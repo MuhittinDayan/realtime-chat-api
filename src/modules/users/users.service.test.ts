@@ -5,9 +5,9 @@ import type {
   SearchUsersRepositoryInput,
   UsersRepository,
 } from "./users.repository.js";
-import type { UserRecord } from "../auth/auth.repository.js";
-import { UserUniqueConstraintError } from "../auth/auth.repository.js";
-import { UsernameAlreadyInUseError } from "../auth/auth.errors.js";
+import type { UserRecord } from "../auth/persistence/auth.repository.js";
+import { UserUniqueConstraintError } from "../auth/persistence/auth.repository.js";
+import { UsernameAlreadyInUseError } from "../auth/domain/auth.errors.js";
 import {
   searchUsersQuerySchema,
   type UpdateCurrentUserInput,

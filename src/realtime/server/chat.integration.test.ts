@@ -8,11 +8,11 @@ import type { Server as SocketServer } from "socket.io";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../app.js";
-import { InvalidTokenError } from "../../modules/auth/auth.errors.js";
+import { InvalidTokenError } from "../../modules/auth/domain/auth.errors.js";
 import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
-} from "../../modules/auth/auth.middleware.js";
+} from "../../modules/auth/http/auth.middleware.js";
 import { MessageController } from "../../modules/messages/message.controller.js";
 import type {
   CreateMessageRepositoryInput,

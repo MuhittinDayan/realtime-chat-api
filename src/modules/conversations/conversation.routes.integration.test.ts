@@ -6,7 +6,7 @@ import { createApp } from "../../app.js";
 import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
-} from "../auth/auth.middleware.js";
+} from "../auth/http/auth.middleware.js";
 import {
   ConversationController,
   type ConversationHttpService,

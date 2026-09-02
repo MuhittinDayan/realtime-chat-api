@@ -4,115 +4,52 @@ import {
   InvalidTokenError,
   UserAlreadyExistsError,
   UsernameAlreadyInUseError,
-} from "./auth.errors.js";
-import { RequestValidationError } from "../../shared/errors/request-validation-error.js";
+} from "../domain/auth.errors.js";
+import { RequestValidationError } from "../../../shared/errors/request-validation-error.js";
 import type {
   AuthRepository,
   CreateUserData,
   UserRecord,
-  UserStatus,
-} from "./auth.repository.js";
-import { UserUniqueConstraintError } from "./auth.repository.js";
+} from "../persistence/auth.repository.js";
+import { UserUniqueConstraintError } from "../persistence/auth.repository.js";
 import type {
   ChangePasswordInput,
   LoginInput,
   RegisterInput,
-} from "./auth.schema.js";
-import { normalizeEmail } from "./auth.schema.js";
-import type { AuthContext } from "./auth.types.js";
+} from "../http/auth.schema.js";
+import { normalizeEmail } from "../http/auth.schema.js";
+import type { AuthContext } from "../domain/auth.types.js";
+import type { RevokeAuthSessionInput } from "../sessions/auth-session.service.js";
 import type {
-  CreatedAuthSession,
-  FindActiveAuthSessionInput,
-  RevokeAuthSessionInput,
-  RotatedAuthSession,
-} from "./sessions/auth-session.service.js";
-import type { AuthSessionRecord } from "./sessions/auth-session.types.js";
-import type { AccessTokenPayload } from "./tokens/access-token.service.js";
+  AccessTokenVerifier,
+  AuthRequestMetadata,
+  AuthResult,
+  AuthServiceDependencies,
+  AuthSessionManager,
+  ListAuthSessionsResult,
+  PasswordService,
+  PublicUser,
+  RefreshResult,
+  SessionRevocationPublisher,
+} from "./auth.contracts.js";
 
-export interface PublicUser {
-  id: string;
-  email: string;
-  username: string;
-  displayName: string;
-  avatarUrl: string | null;
-  status: UserStatus;
-  createdAt: Date;
-}
-
-export interface AuthResult {
-  user: PublicUser;
-  accessToken: string;
-  accessTokenExpiresAt: Date;
-  refreshToken: string;
-  refreshTokenExpiresAt: Date;
-}
-
-export interface RefreshResult {
-  accessToken: string;
-  accessTokenExpiresAt: Date;
-  refreshToken: string;
-  refreshTokenExpiresAt: Date;
-}
-
-export interface PasswordService {
-  hashPassword(password: string): Promise<string>;
-  verifyPassword(passwordHash: string, password: string): Promise<boolean>;
-}
-
-export interface AuthSessionManager {
-  createSession(input: {
-    userId: string;
-    userAgent: string | null;
-  }): Promise<CreatedAuthSession>;
-  findActiveSessionForUser(
-    input: FindActiveAuthSessionInput,
-  ): Promise<unknown>;
-  rotateRefreshToken(refreshToken: string): Promise<RotatedAuthSession>;
-  listActiveSessions(userId: string): Promise<readonly AuthSessionRecord[]>;
-  revokeSession(input: RevokeAuthSessionInput): Promise<boolean>;
-  revokeOtherSessions(
-    userId: string,
-    currentSessionId: string,
-  ): Promise<readonly string[]>;
-}
-
-export interface SessionRevocationPublisher {
-  publishRevoked(sessionIds: readonly string[]): Promise<void> | void;
-}
+export type {
+  AccessTokenVerifier,
+  AuthRequestMetadata,
+  AuthResult,
+  AuthServiceDependencies,
+  AuthSessionDto,
+  AuthSessionManager,
+  ListAuthSessionsResult,
+  PasswordService,
+  PublicUser,
+  RefreshResult,
+  SessionRevocationPublisher,
+} from "./auth.contracts.js";
 
 const noopSessionRevocationPublisher: SessionRevocationPublisher = {
   publishRevoked: () => undefined,
 };
-
-export interface AuthRequestMetadata {
-  userAgent: string | null;
-}
-
-export interface AuthSessionDto {
-  id: string;
-  userAgent: string | null;
-  createdAt: Date;
-  lastUsedAt: Date;
-  expiresAt: Date;
-  isCurrent: boolean;
-}
-
-export interface ListAuthSessionsResult {
-  items: readonly AuthSessionDto[];
-}
-
-export interface AccessTokenVerifier {
-  verifyAccessToken(token: string): Promise<AccessTokenPayload>;
-}
-
-export interface AuthServiceDependencies {
-  authRepository: AuthRepository;
-  authSessionService: AuthSessionManager;
-  accessTokenVerifier: AccessTokenVerifier;
-  passwordService: PasswordService;
-  dummyPasswordHash: string;
-  sessionRevocationPublisher?: SessionRevocationPublisher;
-}
 
 function toPublicUser(user: UserRecord): PublicUser {
   return {
