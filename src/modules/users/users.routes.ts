@@ -24,6 +24,7 @@ import {
   createAvatarUploadSchema,
 } from "../media/avatar.schema.js";
 import { AvatarService } from "../media/avatar.service.js";
+import { socketUserProfilePublisher } from "../../realtime/users/user-profile-publisher.js";
 import { UsersController } from "./users.controller.js";
 import { PrismaUsersRepository } from "./users.repository.js";
 import {
@@ -31,6 +32,7 @@ import {
   updateCurrentUserSchema,
 } from "./users.schema.js";
 import { UsersService } from "./users.service.js";
+import { UserProfileChangeService } from "./user-profile-change.service.js";
 
 export interface CreateUsersRouterOptions {
   controller: UsersController;
@@ -82,7 +84,11 @@ export function createUsersRouter(
 }
 
 const usersRepository = new PrismaUsersRepository();
-const usersService = new UsersService(usersRepository);
+const userProfileChanges = new UserProfileChangeService(
+  usersRepository,
+  socketUserProfilePublisher,
+);
+const usersService = new UsersService(usersRepository, userProfileChanges);
 const usersController = new UsersController(usersService);
 const avatarRepository = new PrismaAvatarRepository();
 const avatarService = new AvatarService(
@@ -95,6 +101,7 @@ const avatarService = new AvatarService(
     uploadUrlTtlSeconds: storageSettings.avatarUploadUrlTtlSeconds,
     cacheControl: storageSettings.avatarCacheControl,
   },
+  userProfileChanges,
 );
 const avatarController = new AvatarController(avatarService);
 

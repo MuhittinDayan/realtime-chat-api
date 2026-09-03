@@ -35,6 +35,7 @@ import { SocketSessionRevocationPublisher } from "../auth/session-revocation-pub
 import { SocketGroupPublisher } from "../groups/group-publisher.js";
 import { ConnectionRegistry } from "../presence/connection-registry.js";
 import { SocketPresencePublisher } from "../presence/presence-publisher.js";
+import { SocketUserProfilePublisher } from "../users/user-profile-publisher.js";
 import type { SocketEventRateLimitPolicy } from "../rate-limit/socket-event-rate-limiter.js";
 import type {
   PresenceRepository,
@@ -251,12 +252,14 @@ async function createHarness(
   access: FakeConversationAccess;
   groupPublisher: SocketGroupPublisher;
   sessionRevocationPublisher: SocketSessionRevocationPublisher;
+  userProfilePublisher: SocketUserProfilePublisher;
 }> {
   const authenticator = new FakeAuthenticator();
   const access = new FakeConversationAccess();
   const publisher = new SocketMessagePublisher();
   const groupPublisher = new SocketGroupPublisher();
   const sessionRevocationPublisher = new SocketSessionRevocationPublisher();
+  const userProfilePublisher = new SocketUserProfilePublisher();
   const messageService = new MessageService(
     new InMemoryMessageRepository(),
     access,
@@ -280,6 +283,7 @@ async function createHarness(
     messagePublisher: publisher,
     groupPublisher,
     sessionRevocationPublisher,
+    userProfilePublisher,
     clock: fixedClock,
     ...(typingLimit === undefined
       ? {}
@@ -298,6 +302,7 @@ async function createHarness(
     access,
     groupPublisher,
     sessionRevocationPublisher,
+    userProfilePublisher,
   };
 }
 
@@ -397,6 +402,27 @@ describe("/chat Socket.IO integration", () => {
     expect(ready.userId).toBe(ALICE_ID);
     expect(ready.socketId).toBe(client.id);
     expect(new Date(ready.serverTime).toISOString()).toBe(NOW.toISOString());
+  });
+
+  it("delivers user:updated through the target user's automatic room", async () => {
+    const { url, userProfilePublisher } = await createHarness();
+    const bobClient = newClient(url, "valid-bob");
+    await connectAndWaitForReady(bobClient);
+    const updated = new Promise<Parameters<
+      ChatServerToClientEvents["user:updated"]
+    >[0]>((resolve) => {
+      bobClient.once("user:updated", resolve);
+    });
+    const user = {
+      id: ALICE_ID,
+      username: "new-alice",
+      displayName: "New Alice",
+      avatarUrl: null,
+    };
+
+    userProfilePublisher.publishToUsers([BOB_ID], user);
+
+    await expect(updated).resolves.toEqual({ user });
   });
 
   it("disconnects only sockets for revoked sessions and emits auth:revoked", async () => {

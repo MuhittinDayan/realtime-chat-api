@@ -67,6 +67,7 @@ describe("phase 14a real object-storage behavior", () => {
         uploadUrlTtlSeconds: storageSettings.avatarUploadUrlTtlSeconds,
         cacheControl: storageSettings.avatarCacheControl,
       },
+      { notifyProfileUpdated: async () => undefined },
       () => NOW,
       () => UPLOAD_ID,
     );

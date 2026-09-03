@@ -16,6 +16,10 @@ import type {
   StoredObjectMetadata,
 } from "../../infrastructure/storage/index.js";
 import type { UserRecord } from "../auth/persistence/auth.repository.js";
+import type {
+  PublicUserProfile,
+  UserProfileChangeNotifier,
+} from "../users/user-profile-change.service.js";
 import {
   AvatarStorageUnavailableError,
   AvatarUploadExpiredError,
@@ -196,10 +200,19 @@ class FakeImageProcessor implements AvatarImageProcessor {
   }
 }
 
+class RecordingProfileChanges implements UserProfileChangeNotifier {
+  readonly users: PublicUserProfile[] = [];
+
+  async notifyProfileUpdated(user: PublicUserProfile): Promise<void> {
+    this.users.push(user);
+  }
+}
+
 function createFixture() {
   const repository = new FakeAvatarRepository();
   const storage = new FakeObjectStorage();
   const processor = new FakeImageProcessor();
+  const profileChanges = new RecordingProfileChanges();
   const service = new AvatarService(
     repository,
     storage,
@@ -210,11 +223,12 @@ function createFixture() {
       uploadUrlTtlSeconds: 600,
       cacheControl: "public, max-age=86400",
     },
+    profileChanges,
     () => NOW,
     () => UPLOAD_ID,
   );
 
-  return { repository, storage, processor, service };
+  return { repository, storage, processor, profileChanges, service };
 }
 
 describe("avatar service", () => {
@@ -268,7 +282,7 @@ describe("avatar service", () => {
   });
 
   it("validates, transforms, stores, and attaches the completed avatar", async () => {
-    const { repository, storage, service } = createFixture();
+    const { repository, storage, profileChanges, service } = createFixture();
     repository.user = activeUser(
       `http://storage/avatars/public/${UPLOAD_ID}.webp`,
     );
@@ -292,6 +306,14 @@ describe("avatar service", () => {
       }),
     );
     expect(user.avatarUrl).toContain(`${UPLOAD_ID}.webp`);
+    expect(profileChanges.users).toEqual([
+      {
+        id: USER_ID,
+        username: "alice",
+        displayName: "Alice",
+        avatarUrl: `http://storage/avatars/public/${UPLOAD_ID}.webp`,
+      },
+    ]);
   });
 
   it("rejects an expired upload before touching storage", async () => {
@@ -352,7 +374,7 @@ describe("avatar service", () => {
   });
 
   it("returns the current profile for a completed retry without reprocessing", async () => {
-    const { repository, storage, service } = createFixture();
+    const { repository, storage, profileChanges, service } = createFixture();
     repository.asset = pendingAsset({ status: "READY", isCurrent: true });
     repository.user = activeUser("http://storage/avatar.webp");
 
@@ -360,24 +382,34 @@ describe("avatar service", () => {
 
     expect(result.avatarUrl).toBe("http://storage/avatar.webp");
     expect(storage.putInput).toBeNull();
+    expect(profileChanges.users).toEqual([]);
   });
 
   it("does not misreport a database completion failure as storage downtime", async () => {
-    const { repository, service } = createFixture();
+    const { repository, profileChanges, service } = createFixture();
     const databaseError = new Error("database offline");
     repository.completeError = databaseError;
 
     await expect(
       service.completeUpload(USER_ID, UPLOAD_ID),
     ).rejects.toBe(databaseError);
+    expect(profileChanges.users).toEqual([]);
   });
 
   it("removes only the user's avatar reference", async () => {
-    const { repository, service } = createFixture();
+    const { repository, profileChanges, service } = createFixture();
     repository.user = activeUser(null);
 
     const result = await service.deleteAvatar(USER_ID);
 
     expect(result.avatarUrl).toBeNull();
+    expect(profileChanges.users).toEqual([
+      {
+        id: USER_ID,
+        username: "alice",
+        displayName: "Alice",
+        avatarUrl: null,
+      },
+    ]);
   });
 });

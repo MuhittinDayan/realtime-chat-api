@@ -10,6 +10,10 @@ import { InvalidTokenError } from "../auth/domain/auth.errors.js";
 import type { UserRecord } from "../auth/persistence/auth.repository.js";
 import type { CurrentUserProfile } from "../users/users.service.js";
 import {
+  toPublicUserProfile,
+  type UserProfileChangeNotifier,
+} from "../users/user-profile-change.service.js";
+import {
   isAvatarContentType,
   MAX_AVATAR_BYTES,
 } from "./avatar.constants.js";
@@ -56,6 +60,7 @@ export class AvatarService {
     private readonly storage: ObjectStorage,
     private readonly imageProcessor: AvatarImageProcessor,
     private readonly config: AvatarServiceConfig,
+    private readonly profileChanges: UserProfileChangeNotifier,
     private readonly now: () => Date = () => new Date(),
     private readonly createId: () => string = randomUUID,
   ) {}
@@ -150,7 +155,12 @@ export class AvatarService {
       throw new InvalidTokenError();
     }
 
-    return toCurrentUserProfile(user);
+    const profile = toCurrentUserProfile(user);
+    await this.profileChanges.notifyProfileUpdated(
+      toPublicUserProfile(profile),
+    );
+
+    return profile;
   }
 
   private async resolveCompletedRetry(
@@ -262,7 +272,12 @@ export class AvatarService {
       throw new AvatarUploadConflictError();
     }
 
-    return toCurrentUserProfile(user);
+    const profile = toCurrentUserProfile(user);
+    await this.profileChanges.notifyProfileUpdated(
+      toPublicUserProfile(profile),
+    );
+
+    return profile;
   }
 
   private assertStoredObjectMatchesIntent(

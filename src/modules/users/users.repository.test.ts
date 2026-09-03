@@ -4,6 +4,7 @@ import type { PrismaClient } from "../../generated/prisma/client.js";
 import { PrismaUsersRepository } from "./users.repository.js";
 
 const CURRENT_USER_ID = "11111111-1111-4111-8111-111111111111";
+const BOB_ID = "22222222-2222-4222-8222-222222222222";
 
 describe("Prisma users repository", () => {
   it("filters active non-deleted users, excludes self and never searches email", async () => {
@@ -52,6 +53,35 @@ describe("Prisma users repository", () => {
           id: { gt: "22222222-2222-4222-8222-222222222222" },
         },
       ],
+    });
+  });
+
+  it("finds active co-members without returning the changed user", async () => {
+    const findMany = vi.fn().mockResolvedValue([{ id: BOB_ID }]);
+    const client = { user: { findMany } } as unknown as PrismaClient;
+    const repository = new PrismaUsersRepository(client);
+
+    await expect(
+      repository.findProfileAudienceUserIds(CURRENT_USER_ID),
+    ).resolves.toEqual([BOB_ID]);
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        id: { not: CURRENT_USER_ID },
+        status: "ACTIVE",
+        deletedAt: null,
+        conversationMembers: {
+          some: {
+            leftAt: null,
+            conversation: {
+              members: {
+                some: { userId: CURRENT_USER_ID, leftAt: null },
+              },
+            },
+          },
+        },
+      },
+      select: { id: true },
     });
   });
 });

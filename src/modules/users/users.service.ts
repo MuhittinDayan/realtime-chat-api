@@ -12,6 +12,10 @@ import type {
   SearchUsersQuery,
   UpdateCurrentUserInput,
 } from "./users.schema.js";
+import {
+  toPublicUserProfile,
+  type UserProfileChangeNotifier,
+} from "./user-profile-change.service.js";
 
 export interface PublicSearchUser {
   id: string;
@@ -36,7 +40,10 @@ export interface CurrentUserProfile {
 }
 
 export class UsersService {
-  constructor(private readonly usersRepository: UsersRepository) {}
+  constructor(
+    private readonly usersRepository: UsersRepository,
+    private readonly profileChanges: UserProfileChangeNotifier,
+  ) {}
 
   async searchUsers(
     currentUserId: string,
@@ -77,7 +84,7 @@ export class UsersService {
         throw new InvalidTokenError();
       }
 
-      return {
+      const profile = {
         id: user.id,
         email: user.email,
         username: user.username,
@@ -86,6 +93,12 @@ export class UsersService {
         status: user.status,
         createdAt: user.createdAt,
       };
+
+      await this.profileChanges.notifyProfileUpdated(
+        toPublicUserProfile(profile),
+      );
+
+      return profile;
     } catch (error: unknown) {
       if (
         error instanceof UserUniqueConstraintError &&

@@ -13,6 +13,10 @@ import {
   type UpdateCurrentUserInput,
 } from "./users.schema.js";
 import { UsersService } from "./users.service.js";
+import type {
+  PublicUserProfile,
+  UserProfileChangeNotifier,
+} from "./user-profile-change.service.js";
 
 const CURRENT_USER_ID = "11111111-1111-4111-8111-111111111111";
 const BOB_ID = "22222222-2222-4222-8222-222222222222";
@@ -25,6 +29,10 @@ class FakeUsersRepository implements UsersRepository {
   updateError: unknown = null;
 
   constructor(readonly records: readonly SearchableUserRecord[]) {}
+
+  async findProfileAudienceUserIds(): Promise<readonly string[]> {
+    return [];
+  }
 
   async searchUsers(
     input: SearchUsersRepositoryInput,
@@ -45,6 +53,14 @@ class FakeUsersRepository implements UsersRepository {
   }
 }
 
+class RecordingProfileChanges implements UserProfileChangeNotifier {
+  readonly users: PublicUserProfile[] = [];
+
+  async notifyProfileUpdated(user: PublicUserProfile): Promise<void> {
+    this.users.push(user);
+  }
+}
+
 describe("users service", () => {
   it("returns only public fields and requests one extra pagination row", async () => {
     const repository = new FakeUsersRepository([
@@ -55,7 +71,7 @@ describe("users service", () => {
         avatarUrl: null,
       },
     ]);
-    const service = new UsersService(repository);
+    const service = new UsersService(repository, new RecordingProfileChanges());
 
     const result = await service.searchUsers(CURRENT_USER_ID, {
       query: "bo",
@@ -87,7 +103,7 @@ describe("users service", () => {
         avatarUrl: null,
       },
     ]);
-    const service = new UsersService(repository);
+    const service = new UsersService(repository, new RecordingProfileChanges());
 
     const firstPage = await service.searchUsers(CURRENT_USER_ID, {
       query: "ar",
@@ -114,7 +130,8 @@ describe("users service", () => {
       createdAt: new Date("2030-01-01T00:00:00.000Z"),
       deletedAt: null,
     };
-    const service = new UsersService(repository);
+    const profileChanges = new RecordingProfileChanges();
+    const service = new UsersService(repository, profileChanges);
 
     const result = await service.updateCurrentUser(CURRENT_USER_ID, {
       username: "new-alice",
@@ -123,6 +140,14 @@ describe("users service", () => {
 
     expect(result).not.toHaveProperty("deletedAt");
     expect(result.username).toBe("new-alice");
+    expect(profileChanges.users).toEqual([
+      {
+        id: CURRENT_USER_ID,
+        username: "new-alice",
+        displayName: "New Alice",
+        avatarUrl: null,
+      },
+    ]);
   });
 
   it("maps a username unique-constraint race to conflict", async () => {
@@ -131,10 +156,12 @@ describe("users service", () => {
       ["username"],
       new Error("simulated database conflict"),
     );
-    const service = new UsersService(repository);
+    const profileChanges = new RecordingProfileChanges();
+    const service = new UsersService(repository, profileChanges);
 
     await expect(
       service.updateCurrentUser(CURRENT_USER_ID, { username: "bob" }),
     ).rejects.toBeInstanceOf(UsernameAlreadyInUseError);
+    expect(profileChanges.users).toEqual([]);
   });
 });
