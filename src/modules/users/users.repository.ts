@@ -11,6 +11,7 @@ import type {
   UpdateCurrentUserInput,
   UserSearchCursor,
 } from "./users.schema.js";
+import type { UserProfileAudienceRepository } from "./user-profile-change.service.js";
 
 export interface SearchableUserRecord {
   id: string;
@@ -26,7 +27,7 @@ export interface SearchUsersRepositoryInput {
   take: number;
 }
 
-export interface UsersRepository {
+export interface UsersRepository extends UserProfileAudienceRepository {
   searchUsers(
     input: SearchUsersRepositoryInput,
   ): Promise<readonly SearchableUserRecord[]>;
@@ -102,6 +103,29 @@ export class PrismaUsersRepository implements UsersRepository {
       take: input.take,
       select: publicUserSelect,
     });
+  }
+
+  async findProfileAudienceUserIds(
+    userId: string,
+  ): Promise<readonly string[]> {
+    const users = await this.client.user.findMany({
+      where: {
+        id: { not: userId },
+        status: "ACTIVE",
+        deletedAt: null,
+        conversationMembers: {
+          some: {
+            leftAt: null,
+            conversation: {
+              members: { some: { userId, leftAt: null } },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+
+    return users.map((user) => user.id);
   }
 
   async updateCurrentUser(

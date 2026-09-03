@@ -25,6 +25,10 @@ import {
   socketReadPublisher,
   type SocketReadPublisher,
 } from "../reads/read-publisher.js";
+import {
+  socketUserProfilePublisher,
+  type SocketUserProfilePublisher,
+} from "../users/user-profile-publisher.js";
 import { configureChatNamespace } from "./configure-chat-namespace.js";
 
 export interface CreateSocketServerOptions {
@@ -36,6 +40,7 @@ export interface CreateSocketServerOptions {
   readPublisher?: SocketReadPublisher;
   groupPublisher?: SocketGroupPublisher;
   sessionRevocationPublisher?: SocketSessionRevocationPublisher;
+  userProfilePublisher?: SocketUserProfilePublisher;
   clock?: Clock;
   typingRateLimitPolicy?: SocketEventRateLimitPolicy;
 }
@@ -59,12 +64,15 @@ export function createSocketServer(
     options.sessionRevocationPublisher ?? socketSessionRevocationPublisher;
   const presencePublisher =
     options.presencePublisher ?? socketPresencePublisher;
+  const userProfilePublisher =
+    options.userProfilePublisher ?? socketUserProfilePublisher;
 
   publisher.bind(chatNamespace);
   readPublisher.bind(chatNamespace);
   groupPublisher.bind(chatNamespace);
   sessionRevocationPublisher.bind(chatNamespace);
   presencePublisher.bind(chatNamespace);
+  userProfilePublisher.bind(chatNamespace);
   configureChatNamespace(chatNamespace, {
     authenticator: options.authenticator ?? authService,
     conversationAccessService:

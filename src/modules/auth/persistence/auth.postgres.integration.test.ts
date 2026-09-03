@@ -114,7 +114,9 @@ describe("phase 13a PostgreSQL behavior", () => {
   });
 
   it("maps a real username unique constraint violation to conflict", async () => {
-    const service = new UsersService(new PrismaUsersRepository(prisma));
+    const service = new UsersService(new PrismaUsersRepository(prisma), {
+      notifyProfileUpdated: async () => undefined,
+    });
 
     await expect(
       service.updateCurrentUser(USER_ID, { username: "phase13a-bob" }),

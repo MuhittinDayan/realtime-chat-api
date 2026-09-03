@@ -2,6 +2,7 @@ import type {
   BaseMessageDto,
   MessageDto,
 } from "../../modules/messages/message.service.js";
+import type { PublicUserProfile } from "../../modules/users/user-profile-change.service.js";
 
 export interface GroupMemberEventDto {
   userId: string;
@@ -82,6 +83,7 @@ export interface ChatServerToClientEvents {
     socketId: string;
     serverTime: string;
   }) => void;
+  "user:updated": (payload: { user: PublicUserProfile }) => void;
   "message:created": (payload: { message: MessageCreatedEventDto }) => void;
   "message:updated": (payload: { message: MessageEventDto }) => void;
   "message:deleted": (payload: { message: MessageEventDto }) => void;

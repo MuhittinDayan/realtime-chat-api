@@ -172,16 +172,6 @@ Ack callback yoksa işlem yapılmaz. Tekrarlanan UUID'ler servis çağrısından
 
 Başarılı handshake sonrasında, socket kendi `user:<userId>` odasına katıldıktan sonra yalnızca yeni socket'e gönderilir.
 
-### `auth:revoked`
-
-Payload yoktur. Session parola değişikliği, belirli session'ı silme, diğer session'ları silme veya logout nedeniyle iptal edildiğinde sunucu o `session:<sessionId>` odasındaki socket'lere önce `auth:revoked` yayınlar, ardından bağlantıları sunucu tarafından kapatır. İstemci `disconnect` reason olarak `io server disconnect` görür; Socket.IO bu durumda otomatik reconnect yapmaz. Frontend yerel access token'ı temizlemeli, kullanıcıya oturumun sonlandırıldığını bildirmeli ve login ekranına yönlendirmelidir.
-
-Mevcut session açık bırakılarak diğer session'lar iptal edildiğinde yalnızca hedef session odalarındaki socket'ler kapanır. Aynı kullanıcının mevcut cihazdaki socket'i bağlı kalır. Kaynaklar: `src/realtime/auth/session-revocation-publisher.ts`, `src/realtime/server/configure-chat-namespace.ts`; test: `src/realtime/server/chat.integration.test.ts`.
-
-### Avatar değişiklikleri için event yoktur
-
-Faz 14a avatar yükleme, değiştirme veya kaldırma işlemi yeni bir Socket.IO event'i yayınlamaz. İsteği yapan istemci complete/delete HTTP cevabındaki güncel `user.avatarUrl` değerini yerel durumuna uygulamalıdır. Diğer istemciler ve konuşma üyeleri yeni avatar URL'sini bir sonraki kullanıcı/konuşma sorgusunda veya avatar alanı taşıyan daha sonraki mevcut event payload'ında görür. Public avatar URL'leri içerik başına benzersizdir; aynı URL'nin içeriği değiştirilmez.
-
 ```ts
 {
   userId: string;     // UUID
@@ -201,6 +191,29 @@ Faz 14a avatar yükleme, değiştirme veya kaldırma işlemi yeni bir Socket.IO 
 ```
 
 Kaynaklar: `src/realtime/server/chat-events.ts`, `src/realtime/server/configure-chat-namespace.ts`.
+
+### `auth:revoked`
+
+Payload yoktur. Session parola değişikliği, belirli session'ı silme, diğer session'ları silme veya logout nedeniyle iptal edildiğinde sunucu o `session:<sessionId>` odasındaki socket'lere önce `auth:revoked` yayınlar, ardından bağlantıları sunucu tarafından kapatır. İstemci `disconnect` reason olarak `io server disconnect` görür; Socket.IO bu durumda otomatik reconnect yapmaz. Frontend yerel access token'ı temizlemeli, kullanıcıya oturumun sonlandırıldığını bildirmeli ve login ekranına yönlendirmelidir.
+
+Mevcut session açık bırakılarak diğer session'lar iptal edildiğinde yalnızca hedef session odalarındaki socket'ler kapanır. Aynı kullanıcının mevcut cihazdaki socket'i bağlı kalır. Kaynaklar: `src/realtime/auth/session-revocation-publisher.ts`, `src/realtime/server/configure-chat-namespace.ts`; test: `src/realtime/server/chat.integration.test.ts`.
+
+### `user:updated`
+
+`PATCH /api/v1/users/me`, avatar upload complete veya avatar silme işlemi kullanıcı profilini başarıyla değiştirdikten sonra yayınlanır. Hedefler, değişen kullanıcının kendi `user:<userId>` odası ile aktif direct veya group konuşmalarındaki diğer üyelerin user odalarıdır. Conversation-room aboneliği gerekmez. Upload intent oluşturma, başarısız işlem ve tamamlanmış bir avatar upload'ına yapılan idempotent retry event üretmez.
+
+```ts
+{
+  user: {
+    id: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string | null;
+  };
+}
+```
+
+Event yayını best-effort'tur. Alıcı sorgusu veya Socket.IO yayını hata verirse hata loglanır; commit edilmiş profil değişikliği ve başarılı HTTP cevabı geri alınmaz. İstemci event geldiğinde kullanıcı kimliğine göre tuttuğu conversation list/detail ve group member cache'lerini güncellemelidir. Kaynaklar: `src/modules/users/user-profile-change.service.ts`, `src/modules/users/users.service.ts`, `src/modules/media/avatar.service.ts`, `src/realtime/users/user-profile-publisher.ts`; testler: `src/modules/users/user-profile-change.service.test.ts`, `src/realtime/users/user-profile-publisher.test.ts`, `src/realtime/server/chat.integration.test.ts`.
 
 ### `message:created`
 
