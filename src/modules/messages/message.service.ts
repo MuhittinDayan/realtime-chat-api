@@ -1,6 +1,11 @@
 import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
 import { encodeCursor } from "../../shared/pagination/cursor.js";
+import { logger } from "../../shared/logging/logger.js";
 import { systemClock, type Clock } from "../../shared/time/clock.js";
+import {
+  noopNotificationPublisher,
+  type NotificationPublisher,
+} from "../notifications/notification.events.js";
 import { MessageNotFoundError } from "./message.errors.js";
 import type { MessageAttachmentDto } from "../attachments/application/attachment.service.ts";
 import {
@@ -70,6 +75,8 @@ export class MessageService {
     private readonly messagePublisher: MessagePublisher,
     private readonly clock: Clock = systemClock,
     private readonly deletedAttachmentRetentionMs = 2_592_000_000,
+    private readonly notificationPublisher: NotificationPublisher =
+      noopNotificationPublisher,
   ) { }
 
   async createMessage(
@@ -81,26 +88,45 @@ export class MessageService {
     const repositoryInput =
       input.content.type === "media"
         ? {
-          conversationId,
-          senderId: userId,
-          clientMessageId: input.clientMessageId,
-          kind: "MEDIA" as const,
-          body: input.content.text ?? null,
-          attachmentIds: input.content.attachmentIds,
-        }
+            conversationId,
+            senderId: userId,
+            clientMessageId: input.clientMessageId,
+            kind: "MEDIA" as const,
+            body: input.content.text ?? null,
+            attachmentIds: input.content.attachmentIds,
+            notificationType: "MESSAGE_CREATED" as const,
+          }
         : {
-          conversationId,
-          senderId: userId,
-          clientMessageId: input.clientMessageId,
-          kind: "TEXT" as const,
-          body: input.content.text,
-          attachmentIds: [],
-        };
+            conversationId,
+            senderId: userId,
+            clientMessageId: input.clientMessageId,
+            kind: "TEXT" as const,
+            body: input.content.text,
+            attachmentIds: [],
+            notificationType: "MESSAGE_CREATED" as const,
+          };
     const result = await this.messageRepository.createMessage(repositoryInput);
     const message = toMessageDto(result.message);
 
     if (result.created) {
-      await this.messagePublisher.publishMessageCreated(message);
+      try {
+        await this.messagePublisher.publishMessageCreated(message);
+      } catch (error: unknown) {
+        logger.error(
+          { err: error, messageId: message.id },
+          "Message created event publish failed",
+        );
+      }
+      for (const notification of result.notifications) {
+        try {
+          await this.notificationPublisher.publishCreated(notification);
+        } catch (error: unknown) {
+          logger.error(
+            { err: error, notificationId: notification.id },
+            "Notification created event publish failed",
+          );
+        }
+      }
     }
 
     return { message, created: result.created };

@@ -8,11 +8,13 @@ import type {
   GroupMemberParams,
   ListConversationsQuery,
   TransferGroupOwnershipBody,
+  UpdateConversationMuteBody,
   UpdateGroupMemberRoleBody,
   UpdateGroupTitleBody,
 } from "./conversation.schema.js";
 import type {
   ConversationDto,
+  ConversationMuteDto,
   CreateDirectConversationResult,
   GroupConversationDto,
   GroupMemberDto,
@@ -24,6 +26,7 @@ export interface ConversationHttpService {
   createGroupConversation(currentUserId: string, input: CreateGroupConversationBody): Promise<GroupConversationDto>;
   listConversations(currentUserId: string, input: ListConversationsQuery): Promise<ListConversationsResult>;
   getConversation(currentUserId: string, conversationId: string): Promise<ConversationDto>;
+  updateMute(currentUserId: string, conversationId: string, input: UpdateConversationMuteBody): Promise<ConversationMuteDto>;
   updateGroupTitle(currentUserId: string, conversationId: string, input: UpdateGroupTitleBody): Promise<GroupConversationDto>;
   addGroupMember(currentUserId: string, conversationId: string, input: AddGroupMemberBody): Promise<GroupMemberDto>;
   removeGroupMember(currentUserId: string, conversationId: string, userId: string): Promise<void>;
@@ -53,6 +56,15 @@ export class ConversationController {
   readonly get: ValidatedRequestHandler<ConversationParams> = async (request, response, input) => {
     const conversation = await this.conversationService.getConversation(requireAuthContext(request).userId, input.conversationId);
     response.status(200).json(conversation);
+  };
+
+  readonly updateMute: ValidatedRequestHandler<UpdateConversationMuteBody> = async (request, response, input) => {
+    const result = await this.conversationService.updateMute(
+      requireAuthContext(request).userId,
+      requireConversationId(request.params.conversationId),
+      input,
+    );
+    response.status(200).json(result);
   };
 
   readonly updateTitle: ValidatedRequestHandler<UpdateGroupTitleBody> = async (request, response, input) => {

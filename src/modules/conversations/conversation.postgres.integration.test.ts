@@ -37,6 +37,58 @@ afterAll(async () => {
 });
 
 describe("group repository against PostgreSQL", () => {
+  it("excludes pre-membership and soft-deleted messages from unread", async () => {
+    const group = await repository.createGroupConversation({
+      creatorId: OWNER_ID,
+      title: "Unread boundaries",
+      userIds: [CAPACITY_USER_IDS[0]!],
+    });
+    expect(group).not.toBeNull();
+    createdConversationIds.push(group!.id);
+    await prisma.message.create({
+      data: {
+        conversationId: group!.id,
+        senderId: OWNER_ID,
+        clientMessageId: "b0000000-0000-4000-8000-000000000002",
+        body: "before membership",
+        createdAt: new Date(NOW.getTime() - 1_000),
+      },
+    });
+    await expect(
+      repository.addGroupMember({
+        conversationId: group!.id,
+        actorId: OWNER_ID,
+        userId: MEMBER_ID,
+        joinedAt: NOW,
+      }),
+    ).resolves.toMatchObject({ status: "ok" });
+    await prisma.message.createMany({
+      data: [
+        {
+          conversationId: group!.id,
+          senderId: OWNER_ID,
+          clientMessageId: "b0000000-0000-4000-8000-000000000003",
+          body: "deleted after membership",
+          createdAt: new Date(NOW.getTime() + 1_000),
+          deletedAt: new Date(NOW.getTime() + 2_000),
+        },
+        {
+          conversationId: group!.id,
+          senderId: OWNER_ID,
+          clientMessageId: "b0000000-0000-4000-8000-000000000004",
+          body: "live after membership",
+          createdAt: new Date(NOW.getTime() + 3_000),
+        },
+      ],
+    });
+
+    const listed = await repository.listConversations({
+      userId: MEMBER_ID,
+      take: 20,
+    });
+    expect(listed.find(({ id }) => id === group!.id)?.unreadCount).toBe(1);
+  });
+
   it("reactivates the composite-PK membership row instead of inserting another", async () => {
     const group = await repository.createGroupConversation({
       creatorId: OWNER_ID,
@@ -49,12 +101,42 @@ describe("group repository against PostgreSQL", () => {
     await expect(repository.listConversations({ userId: OWNER_ID, take: 20 })).resolves.toEqual(
       expect.arrayContaining([expect.objectContaining({ id: group!.id, type: "GROUP" })]),
     );
+    await prisma.conversationMember.update({
+      where: {
+        conversationId_userId: {
+          conversationId: group!.id,
+          userId: MEMBER_ID,
+        },
+      },
+      data: { muted: true },
+    });
+    const message = await prisma.message.create({
+      data: {
+        conversationId: group!.id,
+        senderId: OWNER_ID,
+        clientMessageId: "b0000000-0000-4000-8000-000000000001",
+        body: "notification cleanup fixture",
+      },
+    });
+    await prisma.notification.create({
+      data: {
+        type: "MESSAGE_CREATED",
+        recipientUserId: MEMBER_ID,
+        conversationId: group!.id,
+        messageId: message.id,
+      },
+    });
 
     await expect(repository.leaveGroup({
       conversationId: group!.id,
       actorId: MEMBER_ID,
       leftAt: NOW,
     })).resolves.toEqual({ status: "ok", value: null });
+    await expect(
+      prisma.notification.count({
+        where: { conversationId: group!.id, recipientUserId: MEMBER_ID },
+      }),
+    ).resolves.toBe(0);
 
     const rowCountBefore = await prisma.conversationMember.count({
       where: { conversationId: group!.id, userId: MEMBER_ID },
@@ -73,9 +155,20 @@ describe("group repository against PostgreSQL", () => {
 
     const rows = await prisma.conversationMember.findMany({
       where: { conversationId: group!.id, userId: MEMBER_ID },
-      select: { leftAt: true },
+      select: { leftAt: true, joinedAt: true, muted: true },
     });
-    expect(rows).toEqual([{ leftAt: null }]);
+    expect(rows).toEqual([
+      {
+        leftAt: null,
+        joinedAt: new Date(NOW.getTime() + 1_000),
+        muted: false,
+      },
+    ]);
+    await expect(
+      prisma.notification.count({
+        where: { conversationId: group!.id, recipientUserId: MEMBER_ID },
+      }),
+    ).resolves.toBe(0);
   });
 
   it("serializes concurrent additions at the 100-active-member boundary", async () => {

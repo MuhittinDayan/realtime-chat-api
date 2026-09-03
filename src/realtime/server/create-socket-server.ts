@@ -14,6 +14,10 @@ import type { ConversationAccessService } from "../../modules/messages/message.s
 import { socketGroupPublisher, type SocketGroupPublisher } from "../groups/group-publisher.js";
 import { systemClock, type Clock } from "../../shared/time/clock.js";
 import { socketMessagePublisher, type SocketMessagePublisher } from "../messages/message-publisher.js";
+import {
+  socketNotificationPublisher,
+  type SocketNotificationPublisher,
+} from "../notifications/notification-publisher.js";
 import { presenceService } from "../presence/presence-core.js";
 import {
   socketPresencePublisher,
@@ -37,6 +41,7 @@ export interface CreateSocketServerOptions {
   presenceService?: PresenceLifecycleService;
   presencePublisher?: SocketPresencePublisher;
   messagePublisher?: SocketMessagePublisher;
+  notificationPublisher?: SocketNotificationPublisher;
   readPublisher?: SocketReadPublisher;
   groupPublisher?: SocketGroupPublisher;
   sessionRevocationPublisher?: SocketSessionRevocationPublisher;
@@ -58,6 +63,8 @@ export function createSocketServer(
   });
   const chatNamespace = socketServer.of("/chat");
   const publisher = options.messagePublisher ?? socketMessagePublisher;
+  const notificationPublisher =
+    options.notificationPublisher ?? socketNotificationPublisher;
   const readPublisher = options.readPublisher ?? socketReadPublisher;
   const groupPublisher = options.groupPublisher ?? socketGroupPublisher;
   const sessionRevocationPublisher =
@@ -68,6 +75,7 @@ export function createSocketServer(
     options.userProfilePublisher ?? socketUserProfilePublisher;
 
   publisher.bind(chatNamespace);
+  notificationPublisher.bind(chatNamespace);
   readPublisher.bind(chatNamespace);
   groupPublisher.bind(chatNamespace);
   sessionRevocationPublisher.bind(chatNamespace);

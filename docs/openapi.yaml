@@ -62,6 +62,8 @@ tags:
     description: Doğrudan konuşma oluşturma, listeleme ve detay.
   - name: Messages
     description: İdempotent mesaj oluşturma ve geçmiş sayfalama.
+  - name: Notifications
+    description: Persistent in-app notification listing and read state.
   - name: Reads
     description: Monoton ilerleyen okundu watermark'ı.
 
@@ -800,6 +802,101 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications in descending creation order
+      operationId: listNotifications
+      security:
+        - bearerAuth: []
+      x-source-files:
+        - src/modules/notifications/notification.routes.ts
+        - src/modules/notifications/notification.schema.ts
+        - src/modules/notifications/notification.controller.ts
+        - src/modules/notifications/notification.service.ts
+        - src/modules/notifications/notification.repository.ts
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          description: The previous response's opaque base64url `nextCursor` value.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 768
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: Notification page scoped to the authenticated recipient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationListResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Get the unread notification count
+      operationId: getNotificationUnreadCount
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Notification count independent from message read watermarks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationUnreadCountResponse"
+              example:
+                unreadCount: 3
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/notifications/{notificationId}/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark one owned notification as read
+      operationId: markNotificationRead
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Current notification; repeated calls are idempotent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Notification"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/NotificationNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/conversations/direct:
     post:
       tags: [Conversations]
@@ -1058,6 +1155,65 @@ paths:
           $ref: "#/components/responses/BearerUnauthorized"
         "403":
           $ref: "#/components/responses/InsufficientRole"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/conversations/{conversationId}/mute:
+    patch:
+      tags: [Conversations]
+      summary: Update the authenticated member's notification mute preference
+      operationId: updateConversationMute
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateConversationMuteRequest"
+      responses:
+        "200":
+          description: Current mute preference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationMuteResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/conversations/{conversationId}/notifications/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark every unread notification for one conversation as read
+      operationId: markConversationNotificationsRead
+      description: Does not change the message read watermark. Repeated calls return zero.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "200":
+          description: Number of notifications marked by this call
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarkConversationNotificationsReadResponse"
+              example:
+                markedCount: 2
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/BearerUnauthorized"
         "404":
           $ref: "#/components/responses/ConversationNotFound"
         "500":
@@ -1875,6 +2031,17 @@ components:
               code: CONVERSATION_NOT_FOUND
               message: Conversation not found
               requestId: 77777777-7777-4777-8777-777777777777
+    NotificationNotFound:
+      description: Notification does not exist or is owned by another user
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            error:
+              code: NOTIFICATION_NOT_FOUND
+              message: Notification not found
+              requestId: 77777777-7777-4777-8777-777777777777
     MessageMutationNotFound:
       description: |
         Conversation bulunamadı/aktif üyelik yok veya mesaj bulunamadı,
@@ -2163,6 +2330,99 @@ components:
             $ref: "#/components/schemas/PublicPeerUser"
         nextCursor:
           type: [string, "null"]
+    NotificationType:
+      type: string
+      enum: [MESSAGE_CREATED]
+    NotificationMessage:
+      type: object
+      additionalProperties: false
+      required: [id, kind, body, createdAt, editedAt, deletedAt, sender]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [TEXT, MEDIA]
+        body:
+          type: [string, "null"]
+          description: Null when the current message is soft-deleted or an uncaptioned media message.
+        createdAt:
+          type: string
+          format: date-time
+        editedAt:
+          type: [string, "null"]
+          format: date-time
+        deletedAt:
+          type: [string, "null"]
+          format: date-time
+        sender:
+          $ref: "#/components/schemas/PublicPeerUser"
+    Notification:
+      type: object
+      additionalProperties: false
+      required: [id, type, conversationId, createdAt, readAt, message]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: "#/components/schemas/NotificationType"
+        conversationId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        readAt:
+          type: [string, "null"]
+          format: date-time
+        message:
+          $ref: "#/components/schemas/NotificationMessage"
+    NotificationListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Notification"
+        nextCursor:
+          type: [string, "null"]
+    NotificationUnreadCountResponse:
+      type: object
+      additionalProperties: false
+      required: [unreadCount]
+      properties:
+        unreadCount:
+          type: integer
+          minimum: 0
+    MarkConversationNotificationsReadResponse:
+      type: object
+      additionalProperties: false
+      required: [markedCount]
+      properties:
+        markedCount:
+          type: integer
+          minimum: 0
+    UpdateConversationMuteRequest:
+      type: object
+      additionalProperties: false
+      required: [muted]
+      properties:
+        muted:
+          type: boolean
+    ConversationMuteResponse:
+      type: object
+      additionalProperties: false
+      required: [conversationId, muted]
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        muted:
+          type: boolean
     CreateDirectConversationRequest:
       type: object
       additionalProperties: false

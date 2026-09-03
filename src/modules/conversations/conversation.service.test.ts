@@ -56,6 +56,7 @@ class InMemoryConversationRepository implements ConversationRepository {
   readonly activeMembers = new Map<string, Set<string>>();
   createCalls = 0;
   createdMemberships: readonly string[] = [];
+  muteUpdated = true;
 
   constructor(users: readonly StoredUser[] = [alice, bob]) {
     for (const user of users) {
@@ -162,6 +163,10 @@ class InMemoryConversationRepository implements ConversationRepository {
     throw new Error("Not implemented by direct-conversation test double");
   }
 
+  async updateMute(): Promise<boolean> {
+    return this.muteUpdated;
+  }
+
   async updateGroupTitle(): Promise<never> {
     throw new Error("Not implemented by direct-conversation test double");
   }
@@ -188,6 +193,20 @@ class InMemoryConversationRepository implements ConversationRepository {
 }
 
 describe("direct conversation service", () => {
+  it("updates mute independently from existing messages", async () => {
+    const repository = new InMemoryConversationRepository();
+    const service = new ConversationService(repository);
+
+    await expect(
+      service.updateMute(ALICE_ID, CONVERSATION_ID, { muted: true }),
+    ).resolves.toEqual({ conversationId: CONVERSATION_ID, muted: true });
+
+    repository.muteUpdated = false;
+    await expect(
+      service.updateMute(ALICE_ID, CONVERSATION_ID, { muted: false }),
+    ).rejects.toBeInstanceOf(ConversationNotFoundError);
+  });
+
   it("creates a direct conversation with both memberships", async () => {
     const repository = new InMemoryConversationRepository();
     const service = new ConversationService(repository);

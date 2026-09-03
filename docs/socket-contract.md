@@ -215,6 +215,46 @@ Mevcut session açık bırakılarak diğer session'lar iptal edildiğinde yalnı
 
 Event yayını best-effort'tur. Alıcı sorgusu veya Socket.IO yayını hata verirse hata loglanır; commit edilmiş profil değişikliği ve başarılı HTTP cevabı geri alınmaz. İstemci event geldiğinde kullanıcı kimliğine göre tuttuğu conversation list/detail ve group member cache'lerini güncellemelidir. Kaynaklar: `src/modules/users/user-profile-change.service.ts`, `src/modules/users/users.service.ts`, `src/modules/media/avatar.service.ts`, `src/realtime/users/user-profile-publisher.ts`; testler: `src/modules/users/user-profile-change.service.test.ts`, `src/realtime/users/user-profile-publisher.test.ts`, `src/realtime/server/chat.integration.test.ts`.
 
+### `notification:created`
+
+Mesaj ve ona bağlı bildirim transaction'ı commit edildikten sonra her alıcı için alıcının mevcut `user:<recipientUserId>` odasına yayınlanır. Idempotent mesaj retry'ı yeni bildirim ve ikinci event üretmez. Socket yayını best-effort'tur; yayın hatası commit edilmiş mesajı veya bildirimi geri almaz.
+
+```ts
+{
+  id: string;             // notification UUID
+  type: "MESSAGE_CREATED";
+  conversationId: string; // UUID
+  messageId: string;      // UUID
+  createdAt: string;      // ISO 8601
+}
+```
+
+Payload mesaj metni veya gönderen profili içermez. İstemci gerekirse `GET /api/v1/notifications` üzerinden güncel ilişki verisini alır.
+
+### `notification:read`
+
+Tekil bildirim okuma isteği başarıyla tamamlandığında aynı kullanıcının bütün bağlı cihaz/sekmelerine, kullanıcının `user:<userId>` odası üzerinden yayınlanır. Yayın best-effort'tur ve HTTP yanıtını etkilemez.
+
+```ts
+{
+  id: string;     // notification UUID
+  readAt: string; // ISO 8601
+}
+```
+
+### `notifications:read`
+
+Konuşma bazlı toplu bildirim okuma isteği başarıyla tamamlandığında aynı kullanıcının `user:<userId>` odasına yayınlanır. İdempotent tekrarda `markedCount: 0` event'i yayınlanabilir. Mesaj read watermark'ı bu event'ten bağımsızdır.
+
+```ts
+{
+  conversationId: string; // UUID
+  markedCount: number;
+}
+```
+
+Bu üç event için yeni bir subscribe akışı yoktur. Her başarılı socket bağlantısı mevcut bağlantı kurulumunda `session:ready` gönderilmeden önce otomatik olarak kendi `user:<userId>` odasına katılır. Reconnect yeni bir socket oluşturur ve user-room join otomatik tekrarlanır; conversation-room abonelikleri ise yine istemci tarafından yenilenmelidir. Kaynaklar: `src/realtime/server/configure-chat-namespace.ts`, `src/realtime/rooms/room-names.ts`, `src/realtime/notifications/notification-publisher.ts`.
+
 ### `message:created`
 
 Yeni mesaj DB transaction'ı commit edildikten sonra `conversation:<conversationId>` odasındaki tüm socket'lere yayınlanır. Namespace üzerinden yayınlandığı için gönderen socket de odaya aboneyse event'i alır. Idempotent HTTP retry var olan mesajı döndürdüğünde ikinci event yayınlanmaz.

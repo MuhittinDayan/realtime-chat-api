@@ -22,6 +22,7 @@ export interface ConversationRepository {
   createGroupConversation(input: { creatorId: string; title: string; userIds: readonly string[] }): Promise<ConversationRecord | null>;
   listConversations(input: ListConversationsRepositoryInput): Promise<readonly ListedConversationRecord[]>;
   findConversationForMember(conversationId: string, userId: string): Promise<ConversationRecord | null>;
+  updateMute(input: { conversationId: string; userId: string; muted: boolean }): Promise<boolean>;
   updateGroupTitle(input: { conversationId: string; actorId: string; title: string }): Promise<GroupMutationResult<ConversationRecord>>;
   addGroupMember(input: { conversationId: string; actorId: string; userId: string; joinedAt: Date }): Promise<GroupMutationResult<ConversationMemberRecord>>;
   removeGroupMember(input: { conversationId: string; actorId: string; userId: string; leftAt: Date }): Promise<GroupMutationResult<null>>;
@@ -119,6 +120,14 @@ export class PrismaConversationRepository implements ConversationRepository {
     return this.client.conversation.findFirst({ where: { id: conversationId, members: { some: { userId, leftAt: null } } }, select: conversationSelect });
   }
 
+  async updateMute(input: { conversationId: string; userId: string; muted: boolean }): Promise<boolean> {
+    const result = await this.client.conversationMember.updateMany({
+      where: { conversationId: input.conversationId, userId: input.userId, leftAt: null },
+      data: { muted: input.muted },
+    });
+    return result.count === 1;
+  }
+
   async updateGroupTitle(input: { conversationId: string; actorId: string; title: string }): Promise<GroupMutationResult<ConversationRecord>> {
     return this.withLockedGroup(input.conversationId, async (tx) => {
       const context = await this.loadGroupContext(tx, input.conversationId, input.actorId);
@@ -142,7 +151,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       if (activeCount >= 100) return { status: "MEMBER_LIMIT" };
       const value = existing === null
         ? await tx.conversationMember.create({ data: { conversationId: input.conversationId, userId: input.userId, role: "MEMBER", joinedAt: input.joinedAt }, select: activeMemberSelect })
-        : await tx.conversationMember.update({ where: key, data: { role: "MEMBER", joinedAt: input.joinedAt, leftAt: null }, select: activeMemberSelect });
+        : await tx.conversationMember.update({ where: key, data: { role: "MEMBER", joinedAt: input.joinedAt, leftAt: null, muted: false }, select: activeMemberSelect });
       return { status: "ok", value };
     });
   }
@@ -158,6 +167,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       if (target.role === "OWNER") return { status: "TARGET_IS_OWNER" };
       if (!isManager(context.actor.role)) return { status: "INSUFFICIENT_ROLE" };
       await tx.conversationMember.update({ where: key, data: { leftAt: input.leftAt } });
+      await tx.notification.deleteMany({ where: { conversationId: input.conversationId, recipientUserId: input.userId } });
       return { status: "ok", value: null };
     });
   }
@@ -172,6 +182,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       }
       const key = { conversationId_userId: { conversationId: input.conversationId, userId: input.actorId } };
       await tx.conversationMember.update({ where: key, data: { leftAt: input.leftAt } });
+      await tx.notification.deleteMany({ where: { conversationId: input.conversationId, recipientUserId: input.actorId } });
       return { status: "ok", value: null };
     });
   }
@@ -229,10 +240,14 @@ export class PrismaConversationRepository implements ConversationRepository {
         last_message.sender_id AS "lastMessageSenderId", last_message.created_at AS "lastMessageCreatedAt",
         last_message.deleted_at AS "lastMessageDeletedAt", COALESCE(unread.unread_count, 0)::integer AS "unreadCount"
       FROM conversations AS conversation
+      JOIN conversation_members AS current_member
+        ON current_member.conversation_id = conversation.id
+        AND current_member.user_id = ${userId}::uuid
+        AND current_member.left_at IS NULL
       LEFT JOIN message_reads AS watermark ON watermark.conversation_id = conversation.id AND watermark.user_id = ${userId}::uuid
       LEFT JOIN messages AS watermark_message ON watermark_message.id = watermark.last_read_message_id
       LEFT JOIN LATERAL (SELECT id, body, sender_id, created_at, deleted_at FROM messages WHERE conversation_id = conversation.id ORDER BY created_at DESC, id DESC LIMIT 1) AS last_message ON TRUE
-      LEFT JOIN LATERAL (SELECT COUNT(*) AS unread_count FROM messages AS unread_message WHERE unread_message.conversation_id = conversation.id AND unread_message.sender_id <> ${userId}::uuid AND (watermark_message.id IS NULL OR (unread_message.created_at, unread_message.id) > (watermark_message.created_at, watermark_message.id))) AS unread ON TRUE
+      LEFT JOIN LATERAL (SELECT COUNT(*) AS unread_count FROM messages AS unread_message WHERE unread_message.conversation_id = conversation.id AND unread_message.sender_id <> ${userId}::uuid AND unread_message.deleted_at IS NULL AND unread_message.created_at >= current_member.joined_at AND (watermark_message.id IS NULL OR (unread_message.created_at, unread_message.id) > (watermark_message.created_at, watermark_message.id))) AS unread ON TRUE
       WHERE conversation.id IN (${Prisma.join(conversationIds)})
     `);
   }

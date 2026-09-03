@@ -191,10 +191,157 @@ describe("Prisma conversation repository", () => {
     expect(conversations[1]?.unreadCount).toBe(0);
     const query = queryRaw.mock.calls[0]?.[0] as { sql: string };
     expect(query.sql).toContain("unread_message.sender_id <>");
+    expect(query.sql).toContain("unread_message.deleted_at IS NULL");
+    expect(query.sql).toContain(
+      "unread_message.created_at >= current_member.joined_at",
+    );
+    expect(query.sql).toContain("current_member.left_at IS NULL");
     expect(query.sql).toContain("watermark_message.id IS NULL");
     expect(query.sql).toContain(
       "unread_message.created_at, unread_message.id",
     );
     expect(query.sql).toContain("ORDER BY created_at DESC, id DESC");
+  });
+
+  it("updates mute only for an active membership", async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const client = {
+      conversationMember: { updateMany },
+    } as unknown as PrismaClient;
+    const repository = new PrismaConversationRepository(client);
+
+    await expect(
+      repository.updateMute({
+        conversationId: record.id,
+        userId: ALICE_ID,
+        muted: true,
+      }),
+    ).resolves.toBe(true);
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        conversationId: record.id,
+        userId: ALICE_ID,
+        leftAt: null,
+      },
+      data: { muted: true },
+    });
+  });
+
+  it("refreshes joinedAt and resets mute when a former member rejoins", async () => {
+    const joinedAt = new Date(NOW.getTime() + 1_000);
+    const updatedMember = {
+      userId: BOB_ID,
+      role: "MEMBER" as const,
+      joinedAt,
+      user: record.members[0]!.user,
+    };
+    const update = vi.fn().mockResolvedValue(updatedMember);
+    const transactionClient = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      conversation: {
+        findUnique: vi.fn().mockResolvedValue({ type: "GROUP" }),
+      },
+      conversationMember: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ role: "OWNER", leftAt: null })
+          .mockResolvedValueOnce({ leftAt: NOW }),
+        count: vi.fn().mockResolvedValue(2),
+        update,
+      },
+      user: { findFirst: vi.fn().mockResolvedValue({ id: BOB_ID }) },
+    };
+    const client = {
+      $transaction: vi.fn(
+        async (callback: (tx: typeof transactionClient) => unknown) =>
+          callback(transactionClient),
+      ),
+    } as unknown as PrismaClient;
+    const repository = new PrismaConversationRepository(client);
+
+    await expect(
+      repository.addGroupMember({
+        conversationId: record.id,
+        actorId: ALICE_ID,
+        userId: BOB_ID,
+        joinedAt,
+      }),
+    ).resolves.toEqual({ status: "ok", value: updatedMember });
+    expect(update.mock.calls[0]?.[0].data).toEqual({
+      role: "MEMBER",
+      joinedAt,
+      leftAt: null,
+      muted: false,
+    });
+  });
+
+  it("deletes a removed member's notifications in the membership transaction", async () => {
+    const deleteMany = vi.fn().mockResolvedValue({ count: 2 });
+    const transactionClient = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      conversation: {
+        findUnique: vi.fn().mockResolvedValue({ type: "GROUP" }),
+      },
+      conversationMember: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ role: "OWNER", leftAt: null })
+          .mockResolvedValueOnce({ role: "MEMBER", leftAt: null }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      notification: { deleteMany },
+    };
+    const client = {
+      $transaction: vi.fn(
+        async (callback: (tx: typeof transactionClient) => unknown) =>
+          callback(transactionClient),
+      ),
+    } as unknown as PrismaClient;
+    const repository = new PrismaConversationRepository(client);
+
+    await expect(
+      repository.removeGroupMember({
+        conversationId: record.id,
+        actorId: ALICE_ID,
+        userId: BOB_ID,
+        leftAt: NOW,
+      }),
+    ).resolves.toEqual({ status: "ok", value: null });
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: { conversationId: record.id, recipientUserId: BOB_ID },
+    });
+  });
+
+  it("deletes a leaving member's notifications in the membership transaction", async () => {
+    const deleteMany = vi.fn().mockResolvedValue({ count: 2 });
+    const transactionClient = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+      conversation: {
+        findUnique: vi.fn().mockResolvedValue({ type: "GROUP" }),
+      },
+      conversationMember: {
+        findUnique: vi.fn().mockResolvedValue({ role: "MEMBER", leftAt: null }),
+        update: vi.fn().mockResolvedValue({}),
+      },
+      notification: { deleteMany },
+    };
+    const client = {
+      $transaction: vi.fn(
+        async (callback: (tx: typeof transactionClient) => unknown) =>
+          callback(transactionClient),
+      ),
+    } as unknown as PrismaClient;
+    const repository = new PrismaConversationRepository(client);
+
+    await expect(
+      repository.leaveGroup({
+        conversationId: record.id,
+        actorId: BOB_ID,
+        leftAt: NOW,
+      }),
+    ).resolves.toEqual({ status: "ok", value: null });
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: { conversationId: record.id, recipientUserId: BOB_ID },
+    });
   });
 });

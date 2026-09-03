@@ -808,6 +808,42 @@ Cevap `204` olur; Alice'in tüm socket'leri conversation odasından sunucu taraf
 
 Mesaj ve okundu endpoint'leri GROUP için değişmez. Aktif grup üyesi aynı `/messages` ve `/read` yollarını kullanır; mesaj düzenleme/soft-delete yine yalnızca mesajın göndericisine açıktır, ADMIN veya OWNER başka bir kullanıcının mesajını değiştiremez.
 
+## Bildirim realtime senkronizasyonu
+
+Bob'un bütün açık socket'leri bağlantı kurulurken otomatik olarak `user:<bobUserId>` odasına katılır. Alice'in mesajı ve Bob için oluşturulan notification aynı DB transaction'ında commit edildikten sonra Bob'un cihazları şu event'i alır:
+
+```json
+{
+  "id": "88888888-8888-4888-8888-888888888888",
+  "type": "MESSAGE_CREATED",
+  "conversationId": "33333333-3333-4333-8333-333333333333",
+  "messageId": "44444444-4444-4444-8444-444444444444",
+  "createdAt": "2030-01-01T00:00:00.000Z"
+}
+```
+
+Event adı `notification:created`'dır. Payload önizleme metni taşımaz; istemci bildirim merkezini HTTP listesinden güncelleyebilir.
+
+Bob bir cihazda `PATCH /api/v1/notifications/{id}/read` çağırdığında diğer cihazları `notification:read` alır:
+
+```json
+{
+  "id": "88888888-8888-4888-8888-888888888888",
+  "readAt": "2030-01-01T00:01:00.000Z"
+}
+```
+
+`PATCH /api/v1/conversations/{conversationId}/notifications/read` sonrasında `notifications:read` yayınlanır:
+
+```json
+{
+  "conversationId": "33333333-3333-4333-8333-333333333333",
+  "markedCount": 4
+}
+```
+
+Tekil ve toplu okuma event'leri yalnızca bildirim yaşam döngüsünü senkronize eder; mesaj read watermark'ını ilerletmez. Socket yayını başarısız olsa bile HTTP işlemi başarılı kalır ve doğruluk kaynağı bildirim API'sidir. Notification event'leri user-room üzerinden geldiğinden reconnect sonrasında ayrıca notification subscribe çağrısı gerekmez.
+
 ## Kod-esaslı önemli sonuçlar
 
 - Başarısız Socket.IO auth bir `disconnect` reason üretmez; bağlantı hiç kurulmadığı için istemci `connect_error` alır. Hata `message = "Authentication failed"`, `data.code = "INVALID_TOKEN"` biçimindedir. Kaynak: `src/realtime/auth/socket-auth.middleware.ts`.

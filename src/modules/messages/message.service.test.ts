@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
 import type {
+  CreatedNotificationRecord,
   CreateMessageRepositoryInput,
   CreateMessageRepositoryResult,
   ListMessagesRepositoryInput,
@@ -11,6 +12,7 @@ import type {
   SoftDeleteMessageRepositoryInput,
   UpdateMessageRepositoryInput,
 } from "./message.repository.js";
+import type { NotificationPublisher } from "../notifications/notification.events.js";
 import { MessageNotFoundError } from "./message.errors.js";
 import {
   createMessageBodySchema,
@@ -62,6 +64,7 @@ class InMemoryMessageRepository implements MessageRepository {
   readonly records: MessageRecord[] = [];
   createCount = 0;
   readonly lifecycle: string[];
+  notificationsOnCreate: readonly CreatedNotificationRecord[] = [];
   lastAttachmentPurgeAfter: Date | null = null;
 
   constructor(lifecycle: string[] = []) {
@@ -78,7 +81,7 @@ class InMemoryMessageRepository implements MessageRepository {
     );
 
     if (existing !== undefined) {
-      return { message: existing, created: false };
+      return { message: existing, created: false, notifications: [] };
     }
 
     this.createCount += 1;
@@ -92,7 +95,11 @@ class InMemoryMessageRepository implements MessageRepository {
     };
     this.records.push(message);
     this.lifecycle.push("commit");
-    return { message, created: true };
+    return {
+      message,
+      created: true,
+      notifications: this.notificationsOnCreate,
+    };
   }
 
   async listMessages(
@@ -206,6 +213,49 @@ class RecordingPublisher implements MessagePublisher {
 }
 
 describe("message service creation", () => {
+  it("publishes created notifications after commit and tolerates emit failure", async () => {
+    const lifecycle: string[] = [];
+    const repository = new InMemoryMessageRepository(lifecycle);
+    repository.notificationsOnCreate = [
+      {
+        id: "66666666-6666-4666-8666-666666666666",
+        type: "MESSAGE_CREATED",
+        recipientUserId: BOB_ID,
+        conversationId: CONVERSATION_ID,
+        messageId: createRecord(1).id,
+        createdAt: NOW,
+      },
+    ];
+    const notificationPublisher: NotificationPublisher = {
+      publishCreated: () => {
+        lifecycle.push("publish:notification");
+        throw new Error("socket unavailable");
+      },
+      publishRead: () => undefined,
+      publishConversationRead: () => undefined,
+    };
+    const service = new MessageService(
+      repository,
+      new FakeConversationAccess(true),
+      new RecordingPublisher(lifecycle),
+      undefined,
+      undefined,
+      notificationPublisher,
+    );
+
+    await expect(
+      service.createMessage(ALICE_ID, CONVERSATION_ID, {
+        clientMessageId: CLIENT_MESSAGE_ID,
+        content: { type: "text", text: "hello" },
+      }),
+    ).resolves.toMatchObject({ created: true });
+    expect(lifecycle).toEqual([
+      "commit",
+      "publish",
+      "publish:notification",
+    ]);
+  });
+
   it("validates one to four unique attachment ids for MEDIA messages", () => {
     const attachmentId = "99999999-9999-4999-8999-999999999999";
     expect(

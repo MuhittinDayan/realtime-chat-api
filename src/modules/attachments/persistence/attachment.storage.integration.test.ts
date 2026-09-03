@@ -565,6 +565,7 @@ describe("phase 14b/14c real PostgreSQL, MinIO, and ClamAV behavior", () => {
         kind: "MEDIA",
         body: null,
         attachmentIds,
+        notificationType: "MESSAGE_CREATED",
       }),
     ).rejects.toMatchObject({
       code: "MESSAGE_ATTACHMENTS_TOTAL_SIZE_EXCEEDED",
@@ -617,6 +618,7 @@ describe("phase 14b/14c real PostgreSQL, MinIO, and ClamAV behavior", () => {
         kind: "MEDIA",
         body: null,
         attachmentIds: [ATTACHMENT_ID],
+        notificationType: "MESSAGE_CREATED",
       }),
     ).rejects.toMatchObject({
       statusCode: 404,
@@ -781,6 +783,7 @@ describe("phase 14b/14c real PostgreSQL, MinIO, and ClamAV behavior", () => {
         kind: "MEDIA",
         body: null,
         attachmentIds: [],
+        notificationType: "MESSAGE_CREATED",
       }),
     ).rejects.toBeInstanceOf(AttachmentBindingError);
     await expect(prisma.message.count()).resolves.toBe(0);

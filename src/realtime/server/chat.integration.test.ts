@@ -165,7 +165,7 @@ class InMemoryMessageRepository implements MessageRepository {
       this.message.senderId === input.senderId &&
       this.message.clientMessageId === input.clientMessageId
     ) {
-      return { message: this.message, created: false };
+      return { message: this.message, created: false, notifications: [] };
     }
 
     const created: MessageRecord = {
@@ -181,7 +181,7 @@ class InMemoryMessageRepository implements MessageRepository {
       attachments: [],
     };
     this.message = created;
-    return { message: created, created: true };
+    return { message: created, created: true, notifications: [] };
   }
 
   async listMessages(
