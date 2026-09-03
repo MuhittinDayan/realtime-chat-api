@@ -154,6 +154,11 @@ const environmentSchema = z.object({
     .int()
     .positive()
     .default(2_592_000_000),
+  NOTIFICATION_READ_RETENTION_HOURS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(720),
   AVATAR_CACHE_CONTROL: z
     .string()
     .trim()
