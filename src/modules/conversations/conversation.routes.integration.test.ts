@@ -22,11 +22,13 @@ import type {
   CreateGroupConversationBody,
   ListConversationsQuery,
   TransferGroupOwnershipBody,
+  UpdateConversationMuteBody,
   UpdateGroupMemberRoleBody,
   UpdateGroupTitleBody,
 } from "./conversation.schema.js";
 import type {
   CreateDirectConversationResult,
+  ConversationMuteDto,
   DirectConversationDto,
   GroupConversationDto,
   GroupMemberDto,
@@ -112,6 +114,15 @@ class FakeConversationService implements ConversationHttpService {
       throw this.getError;
     }
     return conversation;
+  }
+
+  async updateMute(
+    _currentUserId: string,
+    _conversationId: string,
+    input: UpdateConversationMuteBody,
+  ): Promise<ConversationMuteDto> {
+    this.throwMutationError();
+    return { conversationId: CONVERSATION_ID, muted: input.muted };
   }
 
   async createGroupConversation(
@@ -210,6 +221,21 @@ describe("conversation HTTP routes", () => {
       .expect(200);
 
     expect(response.body.otherUser.id).toBe(BOB_ID);
+  });
+
+  it("updates the authenticated member's mute preference", async () => {
+    const response = await request(
+      createTestApp(new FakeConversationService()),
+    )
+      .patch(`/api/v1/conversations/${CONVERSATION_ID}/mute`)
+      .set("Authorization", "Bearer token")
+      .send({ muted: true })
+      .expect(200);
+
+    expect(response.body).toEqual({
+      conversationId: CONVERSATION_ID,
+      muted: true,
+    });
   });
 
   it("returns lastMessage and unreadCount in the conversation list", async () => {

@@ -66,6 +66,10 @@ export const updateGroupTitleBodySchema = z
   .object({ title: titleSchema })
   .strict();
 
+export const updateConversationMuteBodySchema = z
+  .object({ muted: z.boolean() })
+  .strict();
+
 export const addGroupMemberBodySchema = z
   .object({ userId: z.string().uuid() })
   .strict();
@@ -101,6 +105,9 @@ export type CreateGroupConversationBody = z.infer<
 >;
 export type UpdateGroupTitleBody = z.infer<
   typeof updateGroupTitleBodySchema
+>;
+export type UpdateConversationMuteBody = z.infer<
+  typeof updateConversationMuteBodySchema
 >;
 export type GroupMemberParams = z.infer<typeof groupMemberParamsSchema>;
 export type AddGroupMemberBody = z.infer<typeof addGroupMemberBodySchema>;

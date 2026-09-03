@@ -29,6 +29,7 @@ import { MessageService } from "../modules/messages/message.service.js";
 import { prisma } from "../infrastructure/database/prisma.js";
 import type { Clock } from "../shared/time/clock.js";
 import { SocketMessagePublisher } from "../realtime/messages/message-publisher.js";
+import { SocketNotificationPublisher } from "../realtime/notifications/notification-publisher.js";
 import type {
   PresenceLifecycleService,
   PresenceSnapshot,
@@ -124,11 +125,14 @@ async function createHarness(
     new PrismaConversationRepository(prisma),
   );
   const messagePublisher = new SocketMessagePublisher();
+  const notificationPublisher = new SocketNotificationPublisher();
   const messageService = new MessageService(
     new PrismaMessageRepository(prisma),
     conversationService,
     messagePublisher,
     clock,
+    undefined,
+    notificationPublisher,
   );
   const authController = new AuthController({
     authService: runtime.authService,
@@ -163,6 +167,7 @@ async function createHarness(
     conversationAccessService: conversationService,
     presenceService: new NoopPresenceService(),
     messagePublisher,
+    notificationPublisher,
     clock,
   });
 
@@ -372,8 +377,14 @@ describe("backend behavior contracts against PostgreSQL", () => {
     await connectAndWaitForReady(bob);
     await subscribe(bob);
     let eventCount = 0;
+    let notificationEventCount = 0;
+    let notificationPayload: unknown;
     bob.on("message:created", () => {
       eventCount += 1;
+    });
+    bob.on("notification:created", (payload) => {
+      notificationEventCount += 1;
+      notificationPayload = payload;
     });
     const body = {
       clientMessageId: CLIENT_MESSAGE_ID,
@@ -394,7 +405,14 @@ describe("backend behavior contracts against PostgreSQL", () => {
 
     expect(retry.body).toEqual(first.body);
     expect(eventCount).toBe(1);
+    expect(notificationEventCount).toBe(1);
+    expect(notificationPayload).toMatchObject({
+      type: "MESSAGE_CREATED",
+      conversationId: CONVERSATION_ID,
+      messageId: first.body.id,
+    });
     await expect(prisma.message.count()).resolves.toBe(1);
+    await expect(prisma.notification.count()).resolves.toBe(1);
   });
 
   it("edits and soft-deletes only for the sender while preserving a masked tombstone", async () => {
@@ -547,7 +565,8 @@ describe("backend behavior contracts against PostgreSQL", () => {
       body: null,
       deletedAt: NOW,
     });
-    expect(conversations.items[0]?.unreadCount).toBe(1);
+    expect(conversations.items[0]?.unreadCount).toBe(0);
+    await expect(prisma.notification.count()).resolves.toBe(1);
   });
 
   it("returns null cursors for empty and final pages and a base64url JSON cursor between pages", async () => {

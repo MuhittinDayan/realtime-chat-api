@@ -74,6 +74,7 @@ function createRepository(): ConversationRepository {
     createGroupConversation: vi.fn().mockResolvedValue(groupRecord),
     listConversations: vi.fn().mockResolvedValue([]),
     findConversationForMember: vi.fn().mockResolvedValue(groupRecord),
+    updateMute: vi.fn().mockResolvedValue(true),
     updateGroupTitle: vi.fn().mockResolvedValue(ok(groupRecord)),
     addGroupMember: vi.fn().mockResolvedValue(ok(targetMember)),
     removeGroupMember: vi.fn().mockResolvedValue(ok(null)),

@@ -87,6 +87,21 @@ export interface ChatServerToClientEvents {
   "message:created": (payload: { message: MessageCreatedEventDto }) => void;
   "message:updated": (payload: { message: MessageEventDto }) => void;
   "message:deleted": (payload: { message: MessageEventDto }) => void;
+  "notification:created": (payload: {
+    id: string;
+    type: "MESSAGE_CREATED";
+    conversationId: string;
+    messageId: string;
+    createdAt: string;
+  }) => void;
+  "notification:read": (payload: {
+    id: string;
+    readAt: string;
+  }) => void;
+  "notifications:read": (payload: {
+    conversationId: string;
+    markedCount: number;
+  }) => void;
   "group:created": (payload: { conversation: GroupConversationEventDto }) => void;
   "group:updated": (payload: { conversation: GroupConversationEventDto }) => void;
   "member:added": (payload: { conversationId: string; member: GroupMemberEventDto }) => void;

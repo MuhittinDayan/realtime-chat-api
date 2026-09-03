@@ -7,6 +7,7 @@ import {
 import { PrismaMessageRepository } from "./message.repository.js";
 
 const ALICE_ID = "11111111-1111-4111-8111-111111111111";
+const BOB_ID = "55555555-5555-4555-8555-555555555555";
 const CONVERSATION_ID = "22222222-2222-4222-8222-222222222222";
 const CLIENT_MESSAGE_ID = "33333333-3333-4333-8333-333333333333";
 const NOW = new Date("2030-01-01T00:00:00.000Z");
@@ -21,6 +22,14 @@ const message = {
   editedAt: null,
   deletedAt: null,
   attachments: [],
+};
+const notification = {
+  id: "66666666-6666-4666-8666-666666666666",
+  type: "MESSAGE_CREATED" as const,
+  recipientUserId: BOB_ID,
+  conversationId: CONVERSATION_ID,
+  messageId: message.id,
+  createdAt: NOW,
 };
 
 describe("Prisma message repository", () => {
@@ -37,6 +46,12 @@ describe("Prisma message repository", () => {
     const transactionClient = {
       message: { create },
       conversation: { updateMany },
+      conversationMember: {
+        findMany: vi.fn().mockResolvedValue([{ userId: BOB_ID }]),
+      },
+      notification: {
+        createManyAndReturn: vi.fn().mockResolvedValue([notification]),
+      },
     };
     const transaction = vi.fn(
       async (callback: (client: typeof transactionClient) => unknown) => {
@@ -58,9 +73,14 @@ describe("Prisma message repository", () => {
       kind: "TEXT",
       body: "hello",
       attachmentIds: [],
+      notificationType: "MESSAGE_CREATED",
     });
 
-    expect(result).toEqual({ message, created: true });
+    expect(result).toEqual({
+      message,
+      created: true,
+      notifications: [notification],
+    });
     expect(lifecycle).toEqual(["create", "update", "commit"]);
     expect(updateMany.mock.calls[0]?.[0]).toEqual({
       where: {
@@ -71,6 +91,36 @@ describe("Prisma message repository", () => {
         ],
       },
       data: { lastMessageAt: NOW },
+    });
+    expect(transactionClient.conversationMember.findMany).toHaveBeenCalledWith({
+      where: {
+        conversationId: CONVERSATION_ID,
+        userId: { not: ALICE_ID },
+        leftAt: null,
+        muted: false,
+        joinedAt: { lte: NOW },
+      },
+      select: { userId: true },
+    });
+    expect(
+      transactionClient.notification.createManyAndReturn,
+    ).toHaveBeenCalledWith({
+      data: [
+        {
+          type: "MESSAGE_CREATED",
+          recipientUserId: BOB_ID,
+          conversationId: CONVERSATION_ID,
+          messageId: message.id,
+        },
+      ],
+      select: {
+        id: true,
+        type: true,
+        recipientUserId: true,
+        conversationId: true,
+        messageId: true,
+        createdAt: true,
+      },
     });
   });
 
@@ -109,10 +159,70 @@ describe("Prisma message repository", () => {
       kind: "TEXT",
       body: "hello",
       attachmentIds: [],
+      notificationType: "MESSAGE_CREATED",
     });
 
-    expect(result).toEqual({ message, created: false });
+    expect(result).toEqual({ message, created: false, notifications: [] });
     expect(findUnique).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not enter the transaction or duplicate notifications for a retry", async () => {
+    const transaction = vi.fn();
+    const client = {
+      message: { findUnique: vi.fn().mockResolvedValue(message) },
+      $transaction: transaction,
+    } as unknown as PrismaClient;
+    const repository = new PrismaMessageRepository(client);
+
+    await expect(
+      repository.createMessage({
+        conversationId: CONVERSATION_ID,
+        senderId: ALICE_ID,
+        clientMessageId: CLIENT_MESSAGE_ID,
+        kind: "TEXT",
+        body: "hello",
+        attachmentIds: [],
+        notificationType: "MESSAGE_CREATED",
+      }),
+    ).resolves.toEqual({ message, created: false, notifications: [] });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("does not insert notifications when every other member is muted", async () => {
+    const createManyAndReturn = vi.fn();
+    const transactionClient = {
+      message: { create: vi.fn().mockResolvedValue(message) },
+      conversation: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      conversationMember: { findMany: vi.fn().mockResolvedValue([]) },
+      notification: { createManyAndReturn },
+    };
+    const client = {
+      message: { findUnique: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn(
+        async (callback: (tx: typeof transactionClient) => unknown) =>
+          callback(transactionClient),
+      ),
+    } as unknown as PrismaClient;
+    const repository = new PrismaMessageRepository(client);
+
+    await repository.createMessage({
+      conversationId: CONVERSATION_ID,
+      senderId: ALICE_ID,
+      clientMessageId: CLIENT_MESSAGE_ID,
+      kind: "TEXT",
+      body: "hello",
+      attachmentIds: [],
+      notificationType: "MESSAGE_CREATED",
+    });
+
+    expect(transactionClient.conversationMember.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ muted: false }),
+      }),
+    );
+    expect(createManyAndReturn).not.toHaveBeenCalled();
   });
 
   it("uses descending keyset pagination before the supplied cursor", async () => {
@@ -247,6 +357,7 @@ describe("Prisma message repository", () => {
           "55555555-5555-4555-8555-555555555555",
           "66666666-6666-4666-8666-666666666666",
         ],
+        notificationType: "MESSAGE_CREATED",
       }),
     ).rejects.toMatchObject({
       statusCode: 409,

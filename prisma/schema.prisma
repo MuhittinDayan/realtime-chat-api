@@ -67,6 +67,12 @@ enum AttachmentKind {
   @@map("attachment_kind")
 }
 
+enum NotificationType {
+  MESSAGE_CREATED
+
+  @@map("notification_type")
+}
+
 model User {
   id            String     @id @default(uuid()) @db.Uuid
   email         String     @unique(map: "users_email_key") @db.VarChar(320)
@@ -85,6 +91,7 @@ model User {
   conversationMembers  ConversationMember[]
   messages             Message[]
   messageReads         MessageRead[]
+  notifications        Notification[]
   authSessions         AuthSession[]
   ownedMediaAssets     MediaAsset[]         @relation("MediaAssetOwner")
   avatarAsset          MediaAsset?          @relation("CurrentAvatar", fields: [avatarAssetId], references: [id], onDelete: SetNull, onUpdate: Cascade)
@@ -135,6 +142,7 @@ model Conversation {
   messages           Message[]
   messageReads       MessageRead[]
   messageAttachments MessageAttachment[]
+  notifications      Notification[]
 
   @@index([createdById], map: "conversations_created_by_id_idx")
   @@map("conversations")
@@ -146,6 +154,7 @@ model ConversationMember {
   role           MemberRole @default(MEMBER)
   joinedAt       DateTime   @default(now()) @map("joined_at") @db.Timestamptz(3)
   leftAt         DateTime?  @map("left_at") @db.Timestamptz(3)
+  muted          Boolean    @default(false)
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
@@ -170,6 +179,7 @@ model Message {
   sender         User                @relation(fields: [senderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   readWatermarks MessageRead[]
   attachments    MessageAttachment[]
+  notifications  Notification[]
 
   @@unique([senderId, clientMessageId], map: "messages_sender_id_client_message_id_key")
   @@index([conversationId, createdAt(sort: Desc), id(sort: Desc)], map: "messages_conversation_id_created_at_id_idx")
@@ -215,6 +225,25 @@ model MessageRead {
   @@index([userId], map: "message_reads_user_id_idx")
   @@index([lastReadMessageId], map: "message_reads_last_read_message_id_idx")
   @@map("message_reads")
+}
+
+model Notification {
+  id              String           @id @default(uuid()) @db.Uuid
+  type            NotificationType
+  recipientUserId String           @map("recipient_user_id") @db.Uuid
+  conversationId  String           @map("conversation_id") @db.Uuid
+  messageId       String           @map("message_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  readAt          DateTime?        @map("read_at") @db.Timestamptz(3)
+
+  recipient    User         @relation(fields: [recipientUserId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([recipientUserId, messageId, type], map: "notifications_recipient_user_id_message_id_type_key")
+  @@index([recipientUserId, readAt, createdAt(sort: Desc)], map: "notifications_recipient_user_id_read_at_created_at_idx")
+  @@index([recipientUserId, conversationId, readAt], map: "notifications_recipient_user_id_conversation_id_read_at_idx")
+  @@map("notifications")
 }
 
 model AuthSession {

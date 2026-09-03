@@ -11,6 +11,7 @@ import { createAuthenticationMiddleware } from "../auth/http/auth.middleware.js"
 import { attachmentRouter } from "../attachments/http/attachment.routes.ts";
 import { messageRouter } from "../messages/message.routes.js";
 import { readRouter } from "../reads/read.routes.js";
+import { conversationNotificationRouter } from "../notifications/notification.routes.js";
 import { conversationController } from "./conversation-core.js";
 import type { ConversationController } from "./conversation.controller.js";
 import {
@@ -22,6 +23,7 @@ import {
   listConversationsQuerySchema,
   transferGroupOwnershipBodySchema,
   updateGroupMemberRoleBodySchema,
+  updateConversationMuteBodySchema,
   updateGroupTitleBodySchema,
 } from "./conversation.schema.js";
 
@@ -53,6 +55,7 @@ export function createConversationRouter(
   router.use("/:conversationId/messages", messageRouter);
   router.use("/:conversationId/attachments", attachmentRouter);
   router.use("/:conversationId/read", readRouter);
+  router.use("/:conversationId/notifications", conversationNotificationRouter);
   router.get(
     "/",
     withValidatedQuery(
@@ -63,6 +66,14 @@ export function createConversationRouter(
   router.get(
     "/:conversationId",
     withValidatedParams(conversationParamsSchema, options.controller.get),
+  );
+  router.patch(
+    "/:conversationId/mute",
+    validateParams(conversationParamsSchema),
+    withValidatedBody(
+      updateConversationMuteBodySchema,
+      options.controller.updateMute,
+    ),
   );
   router.patch(
     "/:conversationId",

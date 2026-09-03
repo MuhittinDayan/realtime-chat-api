@@ -2,7 +2,10 @@ import {
   Prisma,
   type PrismaClient,
 } from "../../generated/prisma/client.js";
-import type { MessageKind } from "../../generated/prisma/enums.js";
+import type {
+  MessageKind,
+  NotificationType,
+} from "../../generated/prisma/enums.js";
 import { prisma } from "../../infrastructure/database/prisma.js";
 import { ConversationNotFoundError } from "../conversations/conversation.errors.js";
 import {
@@ -50,11 +53,22 @@ export interface CreateMessageRepositoryInput {
   kind: "TEXT" | "MEDIA";
   body: string | null;
   attachmentIds: readonly string[];
+  notificationType: "MESSAGE_CREATED";
 }
 
 export interface CreateMessageRepositoryResult {
   message: MessageRecord;
   created: boolean;
+  notifications: readonly CreatedNotificationRecord[];
+}
+
+export interface CreatedNotificationRecord {
+  id: string;
+  type: NotificationType;
+  recipientUserId: string;
+  conversationId: string;
+  messageId: string;
+  createdAt: Date;
 }
 
 export interface ListMessagesRepositoryInput {
@@ -183,11 +197,11 @@ export class PrismaMessageRepository implements MessageRepository {
     );
 
     if (existing !== null) {
-      return { message: existing, created: false };
+      return { message: existing, created: false, notifications: [] };
     }
 
     try {
-      const message = await this.client.$transaction(
+      const transactionResult = await this.client.$transaction(
         async (transaction) => {
           if (input.kind === "MEDIA") {
             if (
@@ -291,18 +305,53 @@ export class PrismaMessageRepository implements MessageRepository {
             data: { lastMessageAt: created.createdAt },
           });
 
+          const recipients = await transaction.conversationMember.findMany({
+            where: {
+              conversationId: input.conversationId,
+              userId: { not: input.senderId },
+              leftAt: null,
+              muted: false,
+              joinedAt: { lte: created.createdAt },
+            },
+            select: { userId: true },
+          });
+
+          const notifications = recipients.length === 0
+            ? []
+            : await transaction.notification.createManyAndReturn({
+                data: recipients.map(({ userId }) => ({
+                  type: input.notificationType,
+                  recipientUserId: userId,
+                  conversationId: input.conversationId,
+                  messageId: created.id,
+                })),
+                select: {
+                  id: true,
+                  type: true,
+                  recipientUserId: true,
+                  conversationId: true,
+                  messageId: true,
+                  createdAt: true,
+                },
+              });
+
           if (input.kind === "TEXT") {
-            return created;
+            return { message: created, notifications };
           }
 
-          return transaction.message.findUniqueOrThrow({
+          const message = await transaction.message.findUniqueOrThrow({
             where: { id: created.id },
             select: messageSelect,
           });
+          return { message, notifications };
         },
       );
 
-      return { message: toMessageRecord(message), created: true };
+      return {
+        message: toMessageRecord(transactionResult.message),
+        created: true,
+        notifications: transactionResult.notifications,
+      };
     } catch (error: unknown) {
       if (!isMessageIdempotencyConflict(error)) {
         throw error;
@@ -317,7 +366,7 @@ export class PrismaMessageRepository implements MessageRepository {
         throw error;
       }
 
-      return { message: racedMessage, created: false };
+      return { message: racedMessage, created: false, notifications: [] };
     }
   }
 

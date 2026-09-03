@@ -25,6 +25,7 @@ import type {
   ListConversationsQuery,
   TransferGroupOwnershipBody,
   UpdateGroupMemberRoleBody,
+  UpdateConversationMuteBody,
   UpdateGroupTitleBody,
 } from "./conversation.schema.js";
 
@@ -82,6 +83,11 @@ export interface CreateDirectConversationResult {
 export interface ListConversationsResult {
   items: readonly ListedConversationDto[];
   nextCursor: string | null;
+}
+
+export interface ConversationMuteDto {
+  conversationId: string;
+  muted: boolean;
 }
 
 export interface GroupPublisher {
@@ -160,6 +166,20 @@ export class ConversationService {
     const conversation = await this.conversationRepository.findConversationForMember(conversationId, currentUserId);
     if (conversation === null) throw new ConversationNotFoundError();
     return toConversationDto(conversation, currentUserId);
+  }
+
+  async updateMute(
+    currentUserId: string,
+    conversationId: string,
+    input: UpdateConversationMuteBody,
+  ): Promise<ConversationMuteDto> {
+    const updated = await this.conversationRepository.updateMute({
+      conversationId,
+      userId: currentUserId,
+      muted: input.muted,
+    });
+    if (!updated) throw new ConversationNotFoundError();
+    return { conversationId, muted: input.muted };
   }
 
   async updateGroupTitle(currentUserId: string, conversationId: string, input: UpdateGroupTitleBody): Promise<GroupConversationDto> {
