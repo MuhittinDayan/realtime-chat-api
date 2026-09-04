@@ -11,6 +11,18 @@ const OWNER_ID = "22222222-2222-4222-8222-222222222222";
 const MEMBER_ID = "33333333-3333-4333-8333-333333333333";
 const NOW = new Date("2030-01-01T00:00:00.000Z");
 
+const owner: GroupMemberDto = {
+  userId: OWNER_ID,
+  role: "OWNER",
+  joinedAt: NOW,
+  user: {
+    id: OWNER_ID,
+    username: "owner",
+    displayName: "Owner",
+    avatarUrl: null,
+  },
+};
+
 const member: GroupMemberDto = {
   userId: MEMBER_ID,
   role: "MEMBER",
@@ -28,11 +40,55 @@ const conversation: GroupConversationDto = {
   type: "GROUP",
   title: "Core team",
   createdAt: NOW,
-  members: [member],
+  members: [owner, member],
 };
 
 describe("SocketGroupPublisher", () => {
-  it("publishes every group event only to the conversation room", () => {
+  it("publishes group creation to every member's user room", () => {
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const publisher = new SocketGroupPublisher();
+    publisher.bind({ to } as never);
+
+    publisher.publishGroupCreated(conversation);
+
+    expect(to).toHaveBeenCalledOnce();
+    expect(to).toHaveBeenCalledWith([
+      `user:${OWNER_ID}`,
+      `user:${MEMBER_ID}`,
+    ]);
+    expect(emit).toHaveBeenCalledWith("group:created", {
+      conversation: {
+        ...conversation,
+        createdAt: NOW.toISOString(),
+        members: [
+          { ...owner, joinedAt: NOW.toISOString() },
+          { ...member, joinedAt: NOW.toISOString() },
+        ],
+      },
+    });
+  });
+
+  it("publishes member addition to the conversation and new member user rooms", () => {
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const publisher = new SocketGroupPublisher();
+    publisher.bind({ to } as never);
+
+    publisher.publishMemberAdded(CONVERSATION_ID, member);
+
+    expect(to).toHaveBeenCalledOnce();
+    expect(to).toHaveBeenCalledWith([
+      `conversation:${CONVERSATION_ID}`,
+      `user:${MEMBER_ID}`,
+    ]);
+    expect(emit).toHaveBeenCalledWith("member:added", {
+      conversationId: CONVERSATION_ID,
+      member: { ...member, joinedAt: NOW.toISOString() },
+    });
+  });
+
+  it("keeps the remaining lifecycle events scoped to the conversation room", () => {
     const emit = vi.fn();
     const socketsLeave = vi.fn();
     const to = vi.fn(() => ({ emit }));
@@ -40,9 +96,7 @@ describe("SocketGroupPublisher", () => {
     const publisher = new SocketGroupPublisher();
     publisher.bind({ to, in: inRoom } as never);
 
-    publisher.publishGroupCreated(conversation);
     publisher.publishGroupUpdated(conversation);
-    publisher.publishMemberAdded(CONVERSATION_ID, member);
     publisher.publishMemberRoleUpdated(CONVERSATION_ID, {
       ...member,
       role: "ADMIN",
@@ -55,24 +109,20 @@ describe("SocketGroupPublisher", () => {
     publisher.publishMemberRemoved(CONVERSATION_ID, MEMBER_ID);
     publisher.publishMemberLeft(CONVERSATION_ID, MEMBER_ID);
 
-    expect(to).toHaveBeenCalledTimes(7);
-    expect(to).toHaveBeenCalledWith(`conversation:${CONVERSATION_ID}`);
+    expect(to).toHaveBeenCalledTimes(5);
+    for (let call = 1; call <= 5; call += 1) {
+      expect(to).toHaveBeenNthCalledWith(
+        call,
+        `conversation:${CONVERSATION_ID}`,
+      );
+    }
     expect(emit.mock.calls.map(([event]) => event)).toEqual([
-      "group:created",
       "group:updated",
-      "member:added",
       "member:role-updated",
       "ownership:transferred",
       "member:removed",
       "member:left",
     ]);
-    expect(emit).toHaveBeenCalledWith("group:created", {
-      conversation: {
-        ...conversation,
-        createdAt: NOW.toISOString(),
-        members: [{ ...member, joinedAt: NOW.toISOString() }],
-      },
-    });
     expect(inRoom).toHaveBeenCalledTimes(2);
     expect(inRoom).toHaveBeenCalledWith(`user:${MEMBER_ID}`);
     expect(socketsLeave).toHaveBeenCalledTimes(2);

@@ -445,7 +445,18 @@ Kaynaklar: `src/realtime/presence/connection-registry.ts`, `src/realtime/presenc
 
 ### GROUP yaşam döngüsü event'leri
 
-Bu event'lerin tamamı yalnızca `conversation:<conversationId>` odasına yayınlanır. HTTP işlemi başarısızsa event üretilmez. Tarihler ISO 8601 string'dir.
+`group:created`, oluşturulan grubun bütün aktif üyelerinin `user:<userId>`
+odalarına yayınlanır. Üyelerin önceden conversation ID'yi bilmesi veya
+`conversation:subscribe` göndermiş olması gerekmez.
+
+`member:added`, mevcut üyeler için `conversation:<conversationId>` odası ile
+yeni üye için `user:<userId>` odasının birleşimine yayınlanır. Bir socket iki
+hedef odada da bulunuyorsa Socket.IO oda birleşimi eventi o socket'e yalnızca
+bir kez teslim eder.
+
+Diğer GROUP yaşam döngüsü event'leri yalnızca
+`conversation:<conversationId>` odasına yayınlanır. HTTP işlemi başarısızsa
+event üretilmez. Tarihler ISO 8601 string'dir.
 
 `group:created` ve `group:updated` aynı zarfı kullanır:
 
@@ -495,7 +506,7 @@ Bu event'lerin tamamı yalnızca `conversation:<conversationId>` odasına yayın
 
 `member:removed` ve `member:left` yayınlandıktan sonra hedef kullanıcının `user:<userId>` odasındaki tüm aktif socket'leri sunucu tarafından conversation odasından çıkarılır. İstemcinin unsubscribe göndermesine güvenilmez. Presence yetkisi değişmez; snapshot ve `presence:updated` görünürlüğü yalnızca aktif DIRECT eşleriyle sınırlıdır.
 
-Kaynaklar: `src/realtime/groups/group-publisher.ts`, `src/realtime/server/chat-events.ts`; çoklu socket oda çıkarma testi: `src/realtime/server/chat.integration.test.ts`.
+Kaynaklar: `src/realtime/groups/group-publisher.ts`, `src/realtime/server/chat-events.ts`; grup keşfi, tekil teslim ve çoklu socket oda çıkarma testleri: `src/realtime/groups/group-publisher.test.ts`, `src/realtime/server/chat.integration.test.ts`.
 
 ## Frontend için zorunlu istemci davranışları
 
