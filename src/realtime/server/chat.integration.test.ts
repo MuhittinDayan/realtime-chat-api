@@ -13,6 +13,10 @@ import {
   createAuthenticationMiddleware,
   type AccessAuthenticator,
 } from "../../modules/auth/http/auth.middleware.js";
+import type {
+  GroupConversationDto,
+  GroupMemberDto,
+} from "../../modules/conversations/conversation.service.js";
 import { MessageController } from "../../modules/messages/message.controller.js";
 import type {
   CreateMessageRepositoryInput,
@@ -62,6 +66,47 @@ const CONVERSATION_ID = "44444444-4444-4444-8444-444444444444";
 const CLIENT_MESSAGE_ID = "55555555-5555-4555-8555-555555555555";
 const MESSAGE_ID = "66666666-6666-4666-8666-666666666666";
 const NOW = new Date("2030-01-01T00:00:00.000Z");
+
+const aliceGroupMember: GroupMemberDto = {
+  userId: ALICE_ID,
+  role: "OWNER",
+  joinedAt: NOW,
+  user: {
+    id: ALICE_ID,
+    username: "alice",
+    displayName: "Alice",
+    avatarUrl: null,
+  },
+};
+const bobGroupMember: GroupMemberDto = {
+  userId: BOB_ID,
+  role: "MEMBER",
+  joinedAt: NOW,
+  user: {
+    id: BOB_ID,
+    username: "bob",
+    displayName: "Bob",
+    avatarUrl: null,
+  },
+};
+const carolGroupMember: GroupMemberDto = {
+  userId: CAROL_ID,
+  role: "MEMBER",
+  joinedAt: NOW,
+  user: {
+    id: CAROL_ID,
+    username: "carol",
+    displayName: "Carol",
+    avatarUrl: null,
+  },
+};
+const groupConversation: GroupConversationDto = {
+  id: CONVERSATION_ID,
+  type: "GROUP",
+  title: "Core team",
+  createdAt: NOW,
+  members: [aliceGroupMember, bobGroupMember],
+};
 
 type ChatClientSocket = ClientSocket<
   ChatServerToClientEvents,
@@ -423,6 +468,95 @@ describe("/chat Socket.IO integration", () => {
     userProfilePublisher.publishToUsers([BOB_ID], user);
 
     await expect(updated).resolves.toEqual({ user });
+  });
+
+  it("delivers group:created to an invited user without a conversation subscription", async () => {
+    const { url, groupPublisher } = await createHarness();
+    const bobClient = newClient(url, "valid-bob");
+    const carolClient = newClient(url, "valid-carol");
+    await Promise.all([
+      connectAndWaitForReady(bobClient),
+      connectAndWaitForReady(carolClient),
+    ]);
+    let bobEventCount = 0;
+    let leakedToNonMember = false;
+    bobClient.on("group:created", () => {
+      bobEventCount += 1;
+    });
+    carolClient.on("group:created", () => {
+      leakedToNonMember = true;
+    });
+    const received = new Promise<Parameters<
+      ChatServerToClientEvents["group:created"]
+    >[0]>((resolve) => {
+      bobClient.once("group:created", resolve);
+    });
+
+    groupPublisher.publishGroupCreated(groupConversation);
+
+    await expect(received).resolves.toEqual({
+      conversation: {
+        ...groupConversation,
+        createdAt: NOW.toISOString(),
+        members: [
+          { ...aliceGroupMember, joinedAt: NOW.toISOString() },
+          { ...bobGroupMember, joinedAt: NOW.toISOString() },
+        ],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(bobEventCount).toBe(1);
+    expect(leakedToNonMember).toBe(false);
+  });
+
+  it("delivers member:added to subscribers and an unsubscribed new member", async () => {
+    const { url, groupPublisher } = await createHarness();
+    const aliceClient = newClient(url, "valid-alice");
+    const carolClient = newClient(url, "valid-carol");
+    await Promise.all([
+      connectAndWaitForReady(aliceClient),
+      connectAndWaitForReady(carolClient),
+    ]);
+    await subscribe(aliceClient);
+    const aliceReceived = new Promise<Parameters<
+      ChatServerToClientEvents["member:added"]
+    >[0]>((resolve) => {
+      aliceClient.once("member:added", resolve);
+    });
+    const carolReceived = new Promise<Parameters<
+      ChatServerToClientEvents["member:added"]
+    >[0]>((resolve) => {
+      carolClient.once("member:added", resolve);
+    });
+
+    groupPublisher.publishMemberAdded(CONVERSATION_ID, carolGroupMember);
+
+    const expectedPayload = {
+      conversationId: CONVERSATION_ID,
+      member: { ...carolGroupMember, joinedAt: NOW.toISOString() },
+    };
+    await expect(aliceReceived).resolves.toEqual(expectedPayload);
+    await expect(carolReceived).resolves.toEqual(expectedPayload);
+  });
+
+  it("delivers member:added once when a socket is in both target rooms", async () => {
+    const { url, groupPublisher } = await createHarness();
+    const bobClient = newClient(url, "valid-bob");
+    await connectAndWaitForReady(bobClient);
+    await subscribe(bobClient);
+    let eventCount = 0;
+    bobClient.on("member:added", () => {
+      eventCount += 1;
+    });
+    const received = new Promise<void>((resolve) => {
+      bobClient.once("member:added", () => resolve());
+    });
+
+    groupPublisher.publishMemberAdded(CONVERSATION_ID, bobGroupMember);
+
+    await received;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(eventCount).toBe(1);
   });
 
   it("disconnects only sockets for revoked sessions and emits auth:revoked", async () => {

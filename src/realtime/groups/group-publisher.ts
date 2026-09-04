@@ -30,7 +30,15 @@ export class SocketGroupPublisher implements GroupPublisher {
   }
 
   publishGroupCreated(conversation: GroupConversationDto): void {
-    this.namespace?.to(conversationRoom(conversation.id)).emit("group:created", {
+    const rooms = [...new Set(conversation.members.map(({ userId }) => userId))].map(
+      userRoom,
+    );
+
+    if (this.namespace === undefined || rooms.length === 0) {
+      return;
+    }
+
+    this.namespace.to(rooms).emit("group:created", {
       conversation: toConversationEvent(conversation),
     });
   }
@@ -42,10 +50,12 @@ export class SocketGroupPublisher implements GroupPublisher {
   }
 
   publishMemberAdded(conversationId: string, member: GroupMemberDto): void {
-    this.namespace?.to(conversationRoom(conversationId)).emit("member:added", {
-      conversationId,
-      member: toMemberEvent(member),
-    });
+    this.namespace
+      ?.to([conversationRoom(conversationId), userRoom(member.userId)])
+      .emit("member:added", {
+        conversationId,
+        member: toMemberEvent(member),
+      });
   }
 
   publishMemberRemoved(conversationId: string, userId: string): void {
